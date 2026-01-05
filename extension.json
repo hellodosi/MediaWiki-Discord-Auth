@@ -20,7 +20,8 @@
 			"services": [
 				"MainConfig",
 				"HttpRequestFactory",
-				"UserOptionsManager"
+				"UserOptionsManager",
+				"ConnectionProvider"
 			]
 		},
 		"LinkDiscord": {

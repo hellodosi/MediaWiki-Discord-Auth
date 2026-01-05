@@ -6,6 +6,7 @@ use MediaWiki\SpecialPage\SpecialPage;
 use MediaWiki\Config\Config;
 use MediaWiki\Http\HttpRequestFactory;
 use MediaWiki\User\UserOptionsManager;
+use Wikimedia\Rdbms\IConnectionProvider;
 
 class SpecialDiscordLogin extends SpecialPage {
 
@@ -18,21 +19,33 @@ class SpecialDiscordLogin extends SpecialPage {
 	/** @var UserOptionsManager */
 	private $userOptionsManager;
 
+	/** @var IConnectionProvider */
+	private $dbProvider;
+
 	public function __construct(
 		Config $config,
 		HttpRequestFactory $httpRequestFactory,
-		UserOptionsManager $userOptionsManager
+		UserOptionsManager $userOptionsManager,
+		IConnectionProvider $dbProvider
 	) {
 		parent::__construct( 'DiscordLogin' );
 		$this->config = $config;
 		$this->httpRequestFactory = $httpRequestFactory;
 		$this->userOptionsManager = $userOptionsManager;
+		$this->dbProvider = $dbProvider;
 	}
 
 	public function execute( $par ) {
 		$request = $this->getRequest();
 		$output = $this->getOutput();
 		$this->setHeaders();
+
+		// Check if username form was submitted
+		$submittedUsername = $request->getVal( 'wpUsername' );
+		if ( $request->wasPosted() && $submittedUsername ) {
+			$this->handleUsernameSubmission( $submittedUsername );
+			return;
+		}
 
 		// Check if we're returning from Discord
 		$code = $request->getVal( 'code' );
@@ -237,7 +250,7 @@ class SpecialDiscordLogin extends SpecialPage {
 	}
 
 	private function getUserByDiscordId( $discordId ) {
-		$dbr = wfGetDB( DB_REPLICA );
+		$dbr = $this->dbProvider->getReplicaDatabase();
 		$row = $dbr->selectRow(
 			'user_properties',
 			[ 'up_user' ],
@@ -255,22 +268,44 @@ class SpecialDiscordLogin extends SpecialPage {
 		return null;
 	}
 
+	private function handleUsernameSubmission( $submittedUsername ) {
+		$request = $this->getRequest();
+		$session = $request->getSession();
+
+		// Retrieve data from session
+		$discordUser = $session->get( 'discord_pending_user' );
+		$discordId = $session->get( 'discord_pending_id' );
+		$memberData = $session->get( 'discord_pending_member' );
+
+		if ( $discordUser && $discordId ) {
+			// Clear session data
+			$session->remove( 'discord_pending_user' );
+			$session->remove( 'discord_pending_id' );
+			$session->remove( 'discord_pending_member' );
+
+			$this->createUserWithUsername( $submittedUsername, $discordUser, $discordId, $memberData );
+		} else {
+			// No pending Discord data, redirect to start
+			$this->redirectToDiscord();
+		}
+	}
+
 	private function showUsernameSelection( $discordUser, $discordId, $memberData = null ) {
 		$request = $this->getRequest();
 		$output = $this->getOutput();
+		$session = $request->getSession();
 
-		// Check if form was submitted
-		$submittedUsername = $request->getVal( 'wpUsername' );
-		if ( $request->wasPosted() && $submittedUsername ) {
-			$this->createUserWithUsername( $submittedUsername, $discordUser, $discordId, $memberData );
-			return;
-		}
+		// Store data in session for form submission
+		$session->set( 'discord_pending_user', $discordUser );
+		$session->set( 'discord_pending_id', $discordId );
+		$session->set( 'discord_pending_member', $memberData );
+		$session->save();
 
 		// Show form
 		$suggestedUsername = $this->getWikiUsername( $discordUser );
 		$discordUsername = htmlspecialchars( $discordUser['username'] );
 
-		$output->setPageTitle( $this->msg( 'discordauth-username-selection-title' ) );
+		$output->setPageTitleMsg( $this->msg( 'discordauth-username-selection-title' ) );
 		$output->addHTML( '
 			<div style="max-width: 500px; margin: 50px auto; padding: 30px; background: #f8f9fa; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
 				<h2 style="margin-top: 0; color: #5865F2;">' . $this->msg( 'discordauth-username-selection-header' )->escaped() . '</h2>
