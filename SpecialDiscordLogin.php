@@ -252,6 +252,19 @@ class SpecialDiscordLogin extends SpecialPage {
         if ( isset( $discordUser['discriminator'] ) && $discordUser['discriminator'] !== '0' ) {
             $username .= '#' . $discordUser['discriminator'];
         }
+
+        // Capitalize first letter to comply with MediaWiki $wgCapitalLinks = true
+        $username = $this->normalizeUsername( $username );
+
+        return $username;
+    }
+
+    private function normalizeUsername( $username ) {
+        // MediaWiki's Title::capitalize() respects $wgCapitalLinks and handles multibyte characters correctly
+        // We use mb_strtoupper to ensure proper UTF-8 handling for international characters
+        if ( mb_strlen( $username ) > 0 ) {
+            $username = mb_strtoupper( mb_substr( $username, 0, 1 ) ) . mb_substr( $username, 1 );
+        }
         return $username;
     }
 
@@ -356,8 +369,8 @@ class SpecialDiscordLogin extends SpecialPage {
         $request = $this->getRequest();
         $session = $request->getSession();
 
-        // Validate username
-        $username = trim( $username );
+        // Normalize and validate username
+        $username = $this->normalizeUsername( trim( $username ) );
         $user = $this->userFactory->newFromName( $username, UserFactory::RIGOR_CREATABLE );
 
         if ( !$user ) {
