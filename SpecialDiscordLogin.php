@@ -122,6 +122,9 @@ class SpecialDiscordLogin extends SpecialPage {
             return;
         }
 
+        // DEBUG: Log Discord user data
+        wfDebugLog( 'DiscordAuth', 'Discord User Data: ' . json_encode( $discordUser ) );
+
         // Check server membership and roles
         $guildId = $this->config->get( 'DiscordGuildId' );
         $allowedRoles = $this->config->get( 'DiscordAllowedRoles' );
@@ -248,10 +251,27 @@ class SpecialDiscordLogin extends SpecialPage {
 
     private function getWikiUsername( $discordUser ) {
         // Discord removed discriminators for most users
-        $username = $discordUser['username'];
-        if ( isset( $discordUser['discriminator'] ) && $discordUser['discriminator'] !== '0' ) {
-            $username .= '#' . $discordUser['discriminator'];
+        $username = $discordUser['username'] ?? '';
+
+        // Fallback if username is empty
+        if ( empty( $username ) ) {
+            $username = $discordUser['global_name'] ?? '';
+            // Remove spaces from global_name as MediaWiki doesn't allow spaces in usernames
+            $username = str_replace( ' ', '_', $username );
         }
+
+        // Final fallback if still empty
+        if ( empty( $username ) ) {
+            $username = 'DiscordUser' . rand( 1000, 9999 );
+        }
+
+        // Add discriminator if present (replace # with underscore for MediaWiki compatibility)
+        if ( isset( $discordUser['discriminator'] ) && $discordUser['discriminator'] !== '0' && $discordUser['discriminator'] !== '' ) {
+            $username .= '_' . $discordUser['discriminator'];
+        }
+
+        // Remove invalid characters for MediaWiki usernames
+        $username = preg_replace( '/[^A-Za-z0-9_\-äöüÄÖÜß]/', '_', $username );
 
         // Capitalize first letter to comply with MediaWiki $wgCapitalLinks = true
         $username = $this->normalizeUsername( $username );
@@ -260,6 +280,11 @@ class SpecialDiscordLogin extends SpecialPage {
     }
 
     private function normalizeUsername( $username ) {
+        // Ensure we have a valid string
+        if ( empty( $username ) || !is_string( $username ) ) {
+            return '';
+        }
+
         // MediaWiki's Title::capitalize() respects $wgCapitalLinks and handles multibyte characters correctly
         // We use mb_strtoupper to ensure proper UTF-8 handling for international characters
         if ( mb_strlen( $username ) > 0 ) {
@@ -296,6 +321,9 @@ class SpecialDiscordLogin extends SpecialPage {
         $discordId = $session->get( 'discord_pending_id' );
         $memberData = $session->get( 'discord_pending_member' );
 
+        // DEBUG: Log retrieved session data
+        wfDebugLog( 'DiscordAuth', 'Retrieved from session - Discord User: ' . json_encode( $discordUser ) . ' | Submitted username: ' . $submittedUsername );
+
         if ( $discordUser && $discordId ) {
             // Clear session data
             $session->remove( 'discord_pending_user' );
@@ -322,7 +350,10 @@ class SpecialDiscordLogin extends SpecialPage {
 
         // Show form
         $suggestedUsername = $this->getWikiUsername( $discordUser );
-        $discordUsername = htmlspecialchars( $discordUser['username'] );
+        $discordUsername = htmlspecialchars( $discordUser['username'] ?? $discordUser['global_name'] ?? 'Discord User' );
+
+        // DEBUG: Log suggested username
+        wfDebugLog( 'DiscordAuth', 'Suggested username: ' . $suggestedUsername . ' | Raw Discord data: ' . json_encode( $discordUser ) );
 
         $output->setPageTitleMsg( $this->msg( 'discordauth-username-selection-title' ) );
         $output->addHTML( '
@@ -371,37 +402,52 @@ class SpecialDiscordLogin extends SpecialPage {
 
         // Normalize and validate username
         $username = $this->normalizeUsername( trim( $username ) );
-        $user = $this->userFactory->newFromName( $username, UserFactory::RIGOR_CREATABLE );
 
-        if ( !$user ) {
+        // Ensure username is not empty after normalization
+        if ( empty( $username ) ) {
+            $output->addHTML( '<div class="error">' . $this->msg( 'discordauth-error-invalid-username' )->escaped() . '</div>' );
+            $this->showUsernameSelection( $discordUser, $discordId );
+            return;
+        }
+
+        // DEBUG: Log username before creation
+        wfDebugLog( 'DiscordAuth', 'Creating user with username: ' . $username );
+
+        // Validate username format first
+        $testUser = $this->userFactory->newFromName( $username, UserFactory::RIGOR_CREATABLE );
+        if ( !$testUser ) {
+            wfDebugLog( 'DiscordAuth', 'Username validation failed for: ' . $username );
             $output->addHTML( '<div class="error">' . $this->msg( 'discordauth-error-invalid-username' )->escaped() . '</div>' );
             $this->showUsernameSelection( $discordUser, $discordId );
             return;
         }
 
         // Check if username already exists
-        if ( $user->isRegistered() ) {
+        if ( $testUser->isRegistered() ) {
+            wfDebugLog( 'DiscordAuth', 'Username already exists: ' . $username );
             $output->addHTML( '<div class="error">' . $this->msg( 'discordauth-error-username-exists' )->escaped() . '</div>' );
             $this->showUsernameSelection( $discordUser, $discordId );
             return;
         }
 
-        // Create user - this writes to database atomically
-        $user = $this->userFactory->newFromName( $username );
-        if ( !$user || !$user->addToDatabase() ) {
+        // Create user using User::createNew which is more reliable
+        $user = \User::createNew( $username, [
+            'email' => $discordUser['email'] ?? '',
+            'real_name' => $discordUser['global_name'] ?? '',
+        ] );
+
+        if ( !$user ) {
+            wfDebugLog( 'DiscordAuth', 'Failed to create user with User::createNew' );
             $output->addHTML( '<div class="error">' . $this->msg( 'discordauth-error-create-failed' )->escaped() . '</div>' );
             return;
         }
 
-        // Set email if available
-        if ( isset( $discordUser['email'] ) && $discordUser['email'] ) {
-            $user->setEmail( $discordUser['email'] );
-            $user->confirmEmail();
-        }
+        // DEBUG: Verify user was created
+        wfDebugLog( 'DiscordAuth', 'User created with ID: ' . $user->getId() . ' and name: ' . $user->getName() );
 
-        // Set real name from Discord
-        if ( isset( $discordUser['global_name'] ) && $discordUser['global_name'] ) {
-            $user->setRealName( $discordUser['global_name'] );
+        // Confirm email if provided
+        if ( isset( $discordUser['email'] ) && $discordUser['email'] ) {
+            $user->confirmEmail();
         }
 
         // Store Discord ID in user_properties table
