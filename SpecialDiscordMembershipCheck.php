@@ -171,6 +171,17 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 	private function checkAllUsers( $users, $botToken ) {
 		$guildId = $this->config->get( 'DiscordGuildId' );
 		$allowedRoles = $this->config->get( 'DiscordAllowedRoles' );
+		// Use $GLOBALS to avoid JSON parsing issues with large Discord IDs
+		$roleToGroupMapping = $GLOBALS['wgDiscordRoleToGroupMapping'] ?? [];
+
+		// Fetch all guild roles once for mapping IDs to names
+		$guildRoles = $this->getGuildRoles( $botToken, $guildId );
+		$roleIdToName = [];
+		if ( $guildRoles ) {
+			foreach ( $guildRoles as $role ) {
+				$roleIdToName[$role['id']] = $role['name'];
+			}
+		}
 
 		$results = [];
 
@@ -186,17 +197,24 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 
 			$hasAccess = false;
 			$reason = '';
+			$discordRoles = [];
+			$expectedGroups = [];
 
 			if ( !$memberData ) {
 				$reason = $this->msg( 'discordauth-check-not-member' )->text();
 			} else {
-				// Check roles
+				// Get user's Discord roles
+				$discordRoles = $memberData['roles'] ?? [];
+
+				// Calculate expected groups based on Discord roles
+				$expectedGroups = $this->calculateExpectedGroups( $discordRoles, $roleToGroupMapping );
+
+				// Check roles for access
 				if ( empty( $allowedRoles ) ) {
 					$hasAccess = true;
 				} else {
-					$userRoles = $memberData['roles'] ?? [];
 					foreach ( $allowedRoles as $roleId ) {
-						if ( in_array( $roleId, $userRoles ) ) {
+						if ( in_array( $roleId, $discordRoles ) ) {
 							$hasAccess = true;
 							break;
 						}
@@ -213,7 +231,10 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 				'discord_username' => $userData['discord_username'],
 				'has_access' => $hasAccess,
 				'reason' => $reason,
-				'is_blocked' => $isBlocked
+				'is_blocked' => $isBlocked,
+				'discord_roles' => $discordRoles,
+				'expected_groups' => $expectedGroups,
+				'role_id_to_name' => $roleIdToName
 			];
 		}
 
@@ -236,6 +257,59 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 		}
 
 		return json_decode( $request->getContent(), true );
+	}
+
+	/**
+	 * Get all roles from a Discord guild
+	 *
+	 * @param string $botToken Discord Bot Token
+	 * @param string $guildId Discord Guild ID
+	 * @return array|null Array of roles or null on failure
+	 */
+	private function getGuildRoles( $botToken, $guildId ) {
+		$url = "https://discord.com/api/v10/guilds/{$guildId}/roles";
+
+		$options = [
+			'method' => 'GET',
+		];
+
+		$request = $this->httpRequestFactory->create( $url, $options );
+		$request->setHeader( 'Authorization', 'Bot ' . $botToken );
+		$status = $request->execute();
+
+		if ( !$status->isOK() ) {
+			return null;
+		}
+
+		return json_decode( $request->getContent(), true );
+	}
+
+	/**
+	 * Calculate expected MediaWiki groups based on Discord roles
+	 *
+	 * @param array $discordRoles Array of Discord role IDs
+	 * @param array $roleToGroupMapping Role to group mapping configuration
+	 * @return array Expected MediaWiki groups
+	 */
+	private function calculateExpectedGroups( array $discordRoles, array $roleToGroupMapping ): array {
+		if ( empty( $roleToGroupMapping ) ) {
+			return [];
+		}
+
+		$expectedGroups = [];
+		foreach ( $discordRoles as $roleId ) {
+			if ( isset( $roleToGroupMapping[$roleId] ) ) {
+				$groups = $roleToGroupMapping[$roleId];
+				// Handle both string and array values
+				if ( is_array( $groups ) ) {
+					$expectedGroups = array_merge( $expectedGroups, $groups );
+				} else {
+					$expectedGroups[] = $groups;
+				}
+			}
+		}
+
+		return array_unique( $expectedGroups );
 	}
 
 	private function displayResults( $results, $usersWithoutDiscord = [] ) {
@@ -291,14 +365,25 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 
 	private function getUserTable( $users, $showBlockButton ) {
 		$user = $this->getUser();
+		// Use $GLOBALS to avoid JSON parsing issues with large Discord IDs
+		$roleToGroupMapping = $GLOBALS['wgDiscordRoleToGroupMapping'] ?? [];
+		$syncMode = $this->config->get( 'DiscordGroupSyncMode' );
 
 		$html = '<table class="wikitable sortable" style="width: 100%;">';
 		$html .= '<thead><tr>';
 		$html .= '<th>' . $this->msg( 'discordauth-table-wiki-user' )->escaped() . '</th>';
 		$html .= '<th>' . $this->msg( 'discordauth-table-discord-user' )->escaped() . '</th>';
-		$html .= '<th>' . $this->msg( 'discordauth-table-discord-id' )->escaped() . '</th>';
 		$html .= '<th>' . $this->msg( 'discordauth-table-status' )->escaped() . '</th>';
-		$html .= '<th>' . $this->msg( 'discordauth-table-groups' )->escaped() . '</th>';
+
+		// Show Discord roles and groups only if mapping is configured
+		if ( !empty( $roleToGroupMapping ) ) {
+			$html .= '<th>Discord Rollen</th>';
+			$html .= '<th>Erwartete Gruppen</th>';
+			$html .= '<th>Aktuelle Gruppen</th>';
+		} else {
+			$html .= '<th>' . $this->msg( 'discordauth-table-groups' )->escaped() . '</th>';
+		}
+
 		if ( $showBlockButton ) {
 			$html .= '<th>' . $this->msg( 'discordauth-table-action' )->escaped() . '</th>';
 		}
@@ -309,22 +394,82 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 			$statusColor = $userData['has_access'] ? '#00af89' : '#d73333';
 			$statusText = $userData['has_access'] ? '✓ ' . $this->msg( 'discordauth-status-valid' )->text() : '✗ ' . $userData['reason'];
 
-			// Display user groups
-			$userGroups = $this->userGroupManager->getUserGroups( $wikiUser );
-			if ( !empty( $userGroups ) ) {
-				$groupsHtml = implode( ', ', $userGroups );
-				$groupsHtml .= '<br><a href="' . \SpecialPage::getTitleFor( 'UserRights', $wikiUser->getName() )->getFullURL() . '" style="font-size: 0.9em;">' . $this->msg( 'discordauth-group-manage' )->text() . '</a>';
-			} else {
-				$groupsHtml = '<span style="color: #72777d;">-</span>';
-				$groupsHtml .= '<br><a href="' . \SpecialPage::getTitleFor( 'UserRights', $wikiUser->getName() )->getFullURL() . '" style="font-size: 0.9em;">' . $this->msg( 'discordauth-group-manage' )->text() . '</a>';
-			}
+			// Get current user groups
+			$currentGroups = $this->userGroupManager->getUserGroups( $wikiUser );
+			$expectedGroups = $userData['expected_groups'] ?? [];
+			$discordRoles = $userData['discord_roles'] ?? [];
+			$roleIdToName = $userData['role_id_to_name'] ?? [];
 
 			$html .= '<tr>';
 			$html .= '<td><a href="' . $wikiUser->getUserPage()->getFullURL() . '">' . htmlspecialchars( $wikiUser->getName() ) . '</a></td>';
 			$html .= '<td>' . htmlspecialchars( $userData['discord_username'] ?: '-' ) . '</td>';
-			$html .= '<td><code>' . htmlspecialchars( $userData['discord_id'] ) . '</code></td>';
 			$html .= '<td style="color: ' . $statusColor . ';">' . htmlspecialchars( $statusText ) . '</td>';
-			$html .= '<td>' . $groupsHtml . '</td>';
+
+			if ( !empty( $roleToGroupMapping ) ) {
+				// Discord Roles column - show role names with IDs
+				if ( !empty( $discordRoles ) ) {
+					$rolesHtml = '<details><summary>' . count( $discordRoles ) . ' Rollen</summary>';
+					$rolesHtml .= '<div style="font-size: 0.9em; margin-top: 5px;">';
+
+					$rolesList = [];
+					foreach ( $discordRoles as $roleId ) {
+						$roleName = $roleIdToName[$roleId] ?? 'Unbekannt';
+						$rolesList[] = '<strong>' . htmlspecialchars( $roleName ) . '</strong><br>'
+							. '<code style="font-size: 0.85em; color: #72777d;">' . htmlspecialchars( $roleId ) . '</code>';
+					}
+
+					$rolesHtml .= implode( '<br><br>', $rolesList );
+					$rolesHtml .= '</div></details>';
+					$html .= '<td>' . $rolesHtml . '</td>';
+				} else {
+					$html .= '<td style="color: #72777d;">-</td>';
+				}
+
+				// Expected groups column
+				if ( !empty( $expectedGroups ) ) {
+					$html .= '<td><strong style="color: #00af89;">' . htmlspecialchars( implode( ', ', $expectedGroups ) ) . '</strong></td>';
+				} else {
+					$html .= '<td style="color: #72777d;">-</td>';
+				}
+
+				// Current groups column with sync indicator
+				$groupsMatch = empty( array_diff( $expectedGroups, $currentGroups ) ) &&
+							   empty( array_diff( $currentGroups, $expectedGroups ) );
+
+				if ( !empty( $currentGroups ) ) {
+					$groupsHtml = htmlspecialchars( implode( ', ', $currentGroups ) );
+
+					// Add sync status indicator
+					if ( !empty( $expectedGroups ) && $syncMode !== 'disabled' ) {
+						if ( $groupsMatch ) {
+							$groupsHtml = '✓ ' . $groupsHtml . ' <span style="color: #00af89; font-size: 0.9em;">(synchronisiert)</span>';
+						} else {
+							$groupsHtml = '⚠️ ' . $groupsHtml . ' <span style="color: #fc3; font-size: 0.9em;">(nicht synchronisiert)</span>';
+						}
+					}
+
+					$groupsHtml .= '<br><a href="' . \SpecialPage::getTitleFor( 'UserRights', $wikiUser->getName() )->getFullURL() . '" style="font-size: 0.9em;">' . $this->msg( 'discordauth-group-manage' )->text() . '</a>';
+					$html .= '<td>' . $groupsHtml . '</td>';
+				} else {
+					$groupsHtml = '<span style="color: #72777d;">-</span>';
+					if ( !empty( $expectedGroups ) && $syncMode !== 'disabled' ) {
+						$groupsHtml .= ' <span style="color: #fc3; font-size: 0.9em;">(nicht synchronisiert)</span>';
+					}
+					$groupsHtml .= '<br><a href="' . \SpecialPage::getTitleFor( 'UserRights', $wikiUser->getName() )->getFullURL() . '" style="font-size: 0.9em;">' . $this->msg( 'discordauth-group-manage' )->text() . '</a>';
+					$html .= '<td>' . $groupsHtml . '</td>';
+				}
+			} else {
+				// Simple groups display when no mapping configured
+				if ( !empty( $currentGroups ) ) {
+					$groupsHtml = implode( ', ', $currentGroups );
+					$groupsHtml .= '<br><a href="' . \SpecialPage::getTitleFor( 'UserRights', $wikiUser->getName() )->getFullURL() . '" style="font-size: 0.9em;">' . $this->msg( 'discordauth-group-manage' )->text() . '</a>';
+					$html .= '<td>' . $groupsHtml . '</td>';
+				} else {
+					$groupsHtml = '<span style="color: #72777d;">-</span>';
+					$groupsHtml .= '<br><a href="' . \SpecialPage::getTitleFor( 'UserRights', $wikiUser->getName() )->getFullURL() . '" style="font-size: 0.9em;">' . $this->msg( 'discordauth-group-manage' )->text() . '</a>';
+					$html .= '<td>' . $groupsHtml . '</td>';
+				}
+			}
 
 			if ( $showBlockButton ) {
 				$html .= '<td>';

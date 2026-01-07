@@ -7,6 +7,7 @@ use MediaWiki\Config\Config;
 use MediaWiki\Http\HttpRequestFactory;
 use MediaWiki\User\UserOptionsManager;
 use MediaWiki\User\UserFactory;
+use MediaWiki\User\UserGroupManager;
 use Wikimedia\Rdbms\IConnectionProvider;
 
 class SpecialDiscordLogin extends SpecialPage {
@@ -26,12 +27,16 @@ class SpecialDiscordLogin extends SpecialPage {
     /** @var IConnectionProvider */
     private $dbProvider;
 
+    /** @var UserGroupManager */
+    private $userGroupManager;
+
     public function __construct(
         Config $config,
         HttpRequestFactory $httpRequestFactory,
         UserOptionsManager $userOptionsManager,
         UserFactory $userFactory,
-        IConnectionProvider $dbProvider
+        IConnectionProvider $dbProvider,
+        UserGroupManager $userGroupManager
     ) {
         parent::__construct( 'DiscordLogin' );
         $this->config = $config;
@@ -39,6 +44,7 @@ class SpecialDiscordLogin extends SpecialPage {
         $this->userOptionsManager = $userOptionsManager;
         $this->userFactory = $userFactory;
         $this->dbProvider = $dbProvider;
+        $this->userGroupManager = $userGroupManager;
     }
 
     public function execute( $par ) {
@@ -130,6 +136,8 @@ class SpecialDiscordLogin extends SpecialPage {
         $allowedRoles = $this->config->get( 'DiscordAllowedRoles' );
 
         $memberData = $this->getGuildMember( $accessToken, $guildId );
+        wfDebugLog( 'DiscordAuth', 'Guild Member Data: ' . json_encode( $memberData ) );
+
         if ( !$memberData ) {
             $output->addHTML( '<div class="error">' . $this->msg( 'discordauth-error-not-member' )->escaped() . '</div>' );
             return;
@@ -166,6 +174,22 @@ class SpecialDiscordLogin extends SpecialPage {
                 $output->addHTML( '<div class="error">' . $this->msg( 'discordauth-error-no-account' )->escaped() . '</div>' );
                 return;
             }
+        }
+
+        // Update discord_username if not set or outdated
+        $this->userOptionsManager->setOption( $user, 'discord_username', $discordUser['username'] ?? '' );
+
+        // Synchronize user groups based on Discord roles
+        $syncMode = $this->config->get( 'DiscordGroupSyncMode' );
+        wfDebugLog( 'DiscordAuth', sprintf(
+            '[SpecialDiscordLogin] Sync mode: %s, Will sync: %s',
+            $syncMode,
+            ( $syncMode === 'always' ) ? 'YES' : 'NO'
+        ) );
+
+        if ( $syncMode === 'always' ) {
+            $userRoles = $memberData['roles'] ?? [];
+            $this->syncUserGroups( $user, $userRoles );
         }
 
         // Log the user in
@@ -450,14 +474,21 @@ class SpecialDiscordLogin extends SpecialPage {
             $user->confirmEmail();
         }
 
-        // Store Discord ID in user_properties table
+        // Store Discord ID and username in user_properties table
         $dbw = $this->dbProvider->getPrimaryDatabase();
         $dbw->insert(
             'user_properties',
             [
-                'up_user' => $user->getId(),
-                'up_property' => 'discord_id',
-                'up_value' => $discordId
+                [
+                    'up_user' => $user->getId(),
+                    'up_property' => 'discord_id',
+                    'up_value' => $discordId
+                ],
+                [
+                    'up_user' => $user->getId(),
+                    'up_property' => 'discord_username',
+                    'up_value' => $discordUser['username'] ?? ''
+                ]
             ],
             __METHOD__,
             [ 'IGNORE' ]
@@ -465,6 +496,14 @@ class SpecialDiscordLogin extends SpecialPage {
 
         // Save all changes to database
         $user->saveSettings();
+
+        // Synchronize user groups based on Discord roles
+        $syncMode = $this->config->get( 'DiscordGroupSyncMode' );
+        if ( $syncMode !== 'disabled' && $memberData ) {
+            $userRoles = $memberData['roles'] ?? [];
+            wfDebugLog( 'DiscordAuth', '[SpecialDiscordLogin - New User] Syncing groups with roles: ' . implode( ', ', $userRoles ) );
+            $this->syncUserGroups( $user, $userRoles );
+        }
 
         // Log the user in
         $session->setUser( $user );
@@ -483,5 +522,127 @@ class SpecialDiscordLogin extends SpecialPage {
         }
 
         $output->redirect( $title->getFullURL() );
+    }
+
+    /**
+     * Synchronize MediaWiki user groups based on Discord roles
+     *
+     * @param \User $user MediaWiki user object
+     * @param array $discordRoles Array of Discord role IDs the user has
+     * @return void
+     */
+    private function syncUserGroups( $user, array $discordRoles ): void {
+        // Use $GLOBALS to avoid JSON parsing issues with large Discord IDs
+        $roleToGroupMapping = $GLOBALS['wgDiscordRoleToGroupMapping'] ?? [];
+
+        // If no mapping configured, skip synchronization
+        if ( empty( $roleToGroupMapping ) ) {
+            wfDebugLog( 'DiscordAuth', '[SpecialDiscordLogin] No role mapping configured, skipping sync' );
+            return;
+        }
+
+        // Convert to associative array if using new format [['role' => '...', 'group' => '...']]
+        $mappingArray = $this->normalizeRoleMapping( $roleToGroupMapping );
+
+        // Debug logging
+        wfDebugLog( 'DiscordAuth', sprintf(
+            '[SpecialDiscordLogin] Syncing groups for user %s with Discord roles: %s',
+            $user->getName(),
+            implode( ', ', $discordRoles )
+        ) );
+
+        // Determine which groups the user should have based on their Discord roles
+        $targetGroups = [];
+        foreach ( $discordRoles as $roleId ) {
+            // Ensure roleId is a string for comparison
+            $roleId = (string)$roleId;
+
+            // Check both string and potential numeric keys
+            if ( isset( $mappingArray[$roleId] ) ) {
+                $groups = $mappingArray[$roleId];
+                wfDebugLog( 'DiscordAuth', sprintf(
+                    '[SpecialDiscordLogin] Role %s maps to groups: %s',
+                    $roleId,
+                    is_array( $groups ) ? implode( ', ', $groups ) : $groups
+                ) );
+
+                // Handle both string and array values
+                if ( is_array( $groups ) ) {
+                    $targetGroups = array_merge( $targetGroups, $groups );
+                } else {
+                    $targetGroups[] = $groups;
+                }
+            } else {
+                wfDebugLog( 'DiscordAuth', sprintf(
+                    '[SpecialDiscordLogin] Role %s not found in mapping',
+                    $roleId
+                ) );
+            }
+        }
+        $targetGroups = array_unique( $targetGroups );
+
+        // Get all groups that are managed by the mapping (to determine which to remove)
+        $managedGroups = [];
+        foreach ( $mappingArray as $groups ) {
+            if ( is_array( $groups ) ) {
+                $managedGroups = array_merge( $managedGroups, $groups );
+            } else {
+                $managedGroups[] = $groups;
+            }
+        }
+        $managedGroups = array_unique( $managedGroups );
+
+        // Get current user groups
+        $currentGroups = $this->userGroupManager->getUserGroups( $user );
+
+        wfDebugLog( 'DiscordAuth', sprintf(
+            '[SpecialDiscordLogin] Current groups: %s, Target groups: %s, Managed groups: %s',
+            implode( ', ', $currentGroups ),
+            implode( ', ', $targetGroups ),
+            implode( ', ', $managedGroups )
+        ) );
+
+        // Add missing groups
+        foreach ( $targetGroups as $group ) {
+            if ( !in_array( $group, $currentGroups ) ) {
+                wfDebugLog( 'DiscordAuth', sprintf( '[SpecialDiscordLogin] Adding user %s to group: %s', $user->getName(), $group ) );
+                $this->userGroupManager->addUserToGroup( $user, $group );
+            }
+        }
+
+        // Remove groups that are managed but user no longer qualifies for
+        foreach ( $managedGroups as $group ) {
+            if ( in_array( $group, $currentGroups ) && !in_array( $group, $targetGroups ) ) {
+                wfDebugLog( 'DiscordAuth', sprintf( '[SpecialDiscordLogin] Removing user %s from group: %s', $user->getName(), $group ) );
+                $this->userGroupManager->removeUserFromGroup( $user, $group );
+            }
+        }
+    }
+
+    /**
+     * Normalize role mapping to handle both old and new formats
+     * Old format (doesn't work with large IDs): ['1234567' => 'group']
+     * New format: [['role' => '1234567', 'group' => 'group']]
+     *
+     * @param array $mapping Raw mapping configuration
+     * @return array Normalized associative array [roleId => group(s)]
+     */
+    private function normalizeRoleMapping( array $mapping ): array {
+        $normalized = [];
+
+        // Check if this is the new format (array of arrays with 'role' and 'group' keys)
+        if ( isset( $mapping[0] ) && is_array( $mapping[0] ) && isset( $mapping[0]['role'] ) ) {
+            // New format: [['role' => '...', 'group' => '...']]
+            foreach ( $mapping as $item ) {
+                if ( isset( $item['role'] ) && isset( $item['group'] ) ) {
+                    $normalized[$item['role']] = $item['group'];
+                }
+            }
+        } else {
+            // Old format (or already normalized): ['roleId' => 'group']
+            $normalized = $mapping;
+        }
+
+        return $normalized;
     }
 }

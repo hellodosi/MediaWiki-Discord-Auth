@@ -57,11 +57,15 @@ $wgDiscordAutoCreate = true;
 $wgDiscordAuthMode = 'optional';  // 'optional', 'required', oder 'supplement'
 
 // Discord Role zu MediaWiki-Gruppen Zuordnung (optional)
+// WICHTIG: Verwenden Sie das Array-of-Objects Format für Discord Snowflake IDs
 $wgDiscordRoleToGroupMapping = [
-    '123456789012345678' => 'sysop',                        // Eine Rolle → eine Gruppe
-    '987654321098765432' => ['bureaucrat', 'editor'],       // Eine Rolle → mehrere Gruppen
-    '111222333444555666' => 'autoconfirmed',                // Weitere Rolle → eine Gruppe
+    ['role' => '123456789012345678', 'group' => 'sysop'],                        // Eine Rolle → eine Gruppe
+    ['role' => '987654321098765432', 'group' => ['bureaucrat', 'editor']],       // Eine Rolle → mehrere Gruppen
+    ['role' => '111222333444555666', 'group' => 'autoconfirmed'],                // Weitere Rolle → eine Gruppe
 ];
+
+// Gruppen-Synchronisations-Modus (optional, Standard: 'always')
+$wgDiscordGroupSyncMode = 'always';  // 'always', 'once', oder 'disabled'
 ```
 
 ### Authentifizierungsmodi
@@ -145,22 +149,23 @@ Die Verknüpfung erfolgt über die Discord-ID, nicht über den Benutzernamen.
 
 Die Extension kann automatisch MediaWiki-Benutzergruppen basierend auf Discord-Rollen zuweisen.
 
-**Funktionsweise:**
-- ✅ **Bei Registrierung:** Gruppen werden automatisch zugewiesen
-- ✅ **Bei jedem Login:** Gruppen werden automatisch synchronisiert
-- ✅ **Bidirektional:** Fehlende Gruppen werden hinzugefügt, überflüssige entfernt
-- ✅ **Nur gemappte Gruppen:** Andere Gruppen bleiben unberührt
-
 ### Konfiguration
 
 ```php
+// Discord Role zu MediaWiki-Gruppen Zuordnung
+// WICHTIG: Discord Snowflake IDs sind sehr große Zahlen (18-19 Stellen).
+// PHP/MediaWiki verliert diese IDs bei Verwendung als Array-Keys.
+// Verwenden Sie daher das Array-of-Objects Format:
 $wgDiscordRoleToGroupMapping = [
-    'DISCORD_ROLE_ID' => 'mediawiki_group_name',           // Eine Rolle → eine Gruppe
-    'DISCORD_ROLE_ID' => ['group1', 'group2'],             // Eine Rolle → mehrere Gruppen
+    ['role' => 'DISCORD_ROLE_ID', 'group' => 'mediawiki_group_name'],           // Eine Rolle → eine Gruppe
+    ['role' => 'DISCORD_ROLE_ID', 'group' => ['group1', 'group2']],             // Eine Rolle → mehrere Gruppen
 
-    '123456789012345678' => 'sysop',                       // Discord Admins → Wiki Admins
-    '987654321098765432' => ['bureaucrat', 'editor'],      // Discord Mods → Mehrere Gruppen
+    ['role' => '123456789012345678', 'group' => 'sysop'],                       // Discord Admins → Wiki Admins
+    ['role' => '987654321098765432', 'group' => ['bureaucrat', 'editor']],      // Discord Mods → Mehrere Gruppen
 ];
+
+// Gruppen-Synchronisations-Modus
+$wgDiscordGroupSyncMode = 'always';  // 'always', 'once', oder 'disabled'
 ```
 
 **Discord Role ID finden:**
@@ -168,12 +173,43 @@ $wgDiscordRoleToGroupMapping = [
 2. Servereinstellungen → Rollen
 3. Rechtsklick auf Rolle → **Rolle-ID kopieren**
 
-### Beispiel-Szenarien
+### Synchronisations-Modi
+
+#### 1. **'always'** (Standard) - Kontinuierliche Synchronisation
+```php
+$wgDiscordGroupSyncMode = 'always';
+```
+- ✅ **Bei Registrierung:** Gruppen werden automatisch zugewiesen
+- ✅ **Bei jedem Login:** Gruppen werden automatisch synchronisiert
+- ✅ **Beim Verknüpfen:** Gruppen werden beim Verknüpfen eines Discord-Kontos synchronisiert
+- ✅ **Bidirektional:** Fehlende Gruppen werden hinzugefügt, überflüssige entfernt
+- ✅ **Nur gemappte Gruppen:** Andere Gruppen bleiben unberührt
+- **Ideal für:** Wikis wo Berechtigungen zentral über Discord verwaltet werden sollen
+
+#### 2. **'once'** - Einmalige Synchronisation
+```php
+$wgDiscordGroupSyncMode = 'once';
+```
+- ✅ **Bei Registrierung:** Gruppen werden automatisch zugewiesen
+- ✅ **Beim Verknüpfen:** Gruppen werden beim ersten Verknüpfen synchronisiert
+- ❌ **Bei Logins:** Keine Synchronisation bei späteren Logins
+- **Manuelle Verwaltung:** Gruppen können danach im Wiki manuell angepasst werden
+- **Ideal für:** Wikis wo Discord nur für die initiale Rechtevergabe genutzt wird
+
+#### 3. **'disabled'** - Keine automatische Synchronisation
+```php
+$wgDiscordGroupSyncMode = 'disabled';
+```
+- ❌ **Keine automatische Synchronisation**
+- **Manuelle Verwaltung:** Alle Gruppen müssen über `Special:UserRights` verwaltet werden
+- **Ideal für:** Wikis die Discord nur zur Authentifizierung nutzen
+
+### Beispiel-Szenarien (mit 'always' Modus)
 
 #### Szenario 1: Neue Registrierung
 ```
 Discord-Nutzer hat Rollen: [Admin, VIP]
-Konfiguration: '123...456' (Admin) → 'sysop'
+Konfiguration: ['role' => '123...456', 'group' => 'sysop']
 
 Ergebnis: Wiki-Account wird mit Gruppe 'sysop' erstellt
 ```
@@ -191,7 +227,7 @@ Nach Login: Wiki-Gruppen: [bureaucrat]
 ```
 Vor Login: Wiki-Gruppen: [editor]
 Discord-Rollen: [Editor, Moderator] (neu)
-Konfiguration: '789...012' (Moderator) → 'bureaucrat'
+Konfiguration: ['role' => '789...012', 'group' => 'bureaucrat']
 Nach Login: Wiki-Gruppen: [editor, bureaucrat]
 
 → 'bureaucrat' wurde automatisch hinzugefügt
@@ -200,7 +236,7 @@ Nach Login: Wiki-Gruppen: [editor, bureaucrat]
 #### Szenario 4: Eine Rolle → Mehrere Gruppen
 ```
 Discord-Nutzer hat Rolle: [Admin]
-Konfiguration: '123...456' (Admin) → ['sysop', 'bureaucrat', 'interface-admin']
+Konfiguration: ['role' => '123...456', 'group' => ['sysop', 'bureaucrat', 'interface-admin']]
 
 Ergebnis: Benutzer erhält alle drei Gruppen automatisch
 ```
@@ -234,21 +270,26 @@ Aktuell: editor, sysop
 - Admins können Gruppen weiterhin manuell über `Special:UserRights` verwalten
 
 ⚠️ **Performance:**
-- Synchronisation erfolgt bei jedem Discord-Login
+- Synchronisation erfolgt bei jedem Discord-Login (nur bei `'always'` Modus)
 - Keine Hintergrund-Jobs erforderlich
 - Live-Abfrage der Discord-Rollen via API
+
+💡 **Empfehlung:**
+- Verwenden Sie `'always'` wenn Discord die zentrale Berechtigungsquelle ist
+- Verwenden Sie `'once'` wenn Sie nur initiale Gruppen zuweisen möchten
+- Verwenden Sie `'disabled'` wenn Sie volle manuelle Kontrolle benötigen
 
 💡 **Best Practice:**
 ```php
 // Empfohlene Struktur:
 $wgDiscordRoleToGroupMapping = [
     // Kritische Berechtigungen
-    'ADMIN_ROLE_ID' => 'sysop',
-    'MOD_ROLE_ID' => 'bureaucrat',
+    ['role' => 'ADMIN_ROLE_ID', 'group' => 'sysop'],
+    ['role' => 'MOD_ROLE_ID', 'group' => 'bureaucrat'],
 
     // Spezielle Gruppen
-    'EDITOR_ROLE_ID' => 'editor',
-    'TRUSTED_ROLE_ID' => 'autoconfirmed',
+    ['role' => 'EDITOR_ROLE_ID', 'group' => 'editor'],
+    ['role' => 'TRUSTED_ROLE_ID', 'group' => 'autoconfirmed'],
 ];
 
 // Hinweis: Gruppen müssen in MediaWiki existieren
@@ -406,6 +447,7 @@ Die Extension verwendet folgende i18n-Schlüssel für Fehlermeldungen:
 | `$wgDiscordAuthMode` | string | `'optional'` | Authentifizierungsmodus: `'optional'`, `'required'`, oder `'supplement'` |
 | `$wgDiscordBotToken` | string | `''` | Discord Bot Token für Admin-Tools (optional, nur für Special:DiscordMembershipCheck) |
 | `$wgDiscordRoleToGroupMapping` | array | `[]` | Zuordnung Discord Role ID → MediaWiki Gruppe (optional) |
+| `$wgDiscordGroupSyncMode` | string | `'always'` | Gruppen-Synchronisations-Modus: `'always'` (bei jedem Login), `'once'` (nur bei Registrierung), `'disabled'` (keine Synchronisation) |
 
 ## Entwicklung
 
