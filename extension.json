@@ -21,6 +21,7 @@
 				"MainConfig",
 				"HttpRequestFactory",
 				"UserOptionsManager",
+				"UserFactory",
 				"ConnectionProvider"
 			]
 		},
