@@ -194,12 +194,16 @@ class SpecialDiscordLogin extends SpecialPage {
 
         // Log the user in
         $session->setUser( $user );
-        $user->setCookies();
-        $user->saveSettings();
+
+        // Set remember me to true to ensure cookies last long enough
+        $session->setRememberUser( true );
 
         // Set Discord authentication timestamp for session timeout
         $session->set( 'discord_last_auth', time() );
         $session->save();
+
+        // Set cookies with extended expiration (1 week minimum)
+        $user->setCookies( null, null, true );
 
         // Redirect to main page
         $returnTo = $request->getVal( 'returnto' );
@@ -507,11 +511,16 @@ class SpecialDiscordLogin extends SpecialPage {
 
         // Log the user in
         $session->setUser( $user );
-        $user->setCookies();
+
+        // Set remember me to true to ensure cookies last long enough
+        $session->setRememberUser( true );
 
         // Set Discord authentication timestamp for session timeout
         $session->set( 'discord_last_auth', time() );
         $session->save();
+
+        // Set cookies with extended expiration (1 week minimum)
+        $user->setCookies( null, null, true );
 
         // Redirect to main page
         $returnTo = $request->getVal( 'returnto' );
