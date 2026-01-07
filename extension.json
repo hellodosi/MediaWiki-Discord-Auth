@@ -22,7 +22,8 @@
 				"HttpRequestFactory",
 				"UserOptionsManager",
 				"UserFactory",
-				"ConnectionProvider"
+				"ConnectionProvider",
+				"UserGroupManager"
 			]
 		},
 		"LinkDiscord": {
@@ -31,7 +32,8 @@
 				"MainConfig",
 				"HttpRequestFactory",
 				"UserOptionsLookup",
-				"UserOptionsManager"
+				"UserOptionsManager",
+				"UserGroupManager"
 			]
 		},
 		"DiscordMembershipCheck": {
@@ -43,6 +45,12 @@
 				"DBLoadBalancerFactory",
 				"UserGroupManager"
 			]
+		},
+		"DiscordDebug": {
+			"class": "DiscordAuth\\SpecialDiscordDebug",
+			"services": [
+				"MainConfig"
+			]
 		}
 	},
 	"AuthManagerAutoConfig": {
@@ -51,7 +59,8 @@
 				"class": "DiscordAuth\\DiscordPrimaryAuthenticationProvider",
 				"services": [
 					"ConfigFactory",
-					"HttpRequestFactory"
+					"HttpRequestFactory",
+					"UserGroupManager"
 				],
 				"sort": 50
 			}
@@ -82,8 +91,12 @@
 			"description": "Discord Bot Token for admin membership checks (optional, only needed for Special:DiscordMembershipCheck)"
 		},
 		"DiscordRoleToGroupMapping": {
-			"value": {},
+			"value": [],
 			"description": "Mapping of Discord Role IDs to MediaWiki groups. Example: {\"123456789\": \"sysop\", \"987654321\": [\"bureaucrat\", \"editor\"]}"
+		},
+		"DiscordGroupSyncMode": {
+			"value": "always",
+			"description": "Group synchronization mode: 'always' (sync on every login), 'once' (sync only on registration/first link), 'disabled' (no automatic sync)"
 		},
 		"DiscordSessionTimeout": {
 			"value": 604800,

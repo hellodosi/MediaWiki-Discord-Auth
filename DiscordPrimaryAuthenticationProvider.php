@@ -9,6 +9,7 @@ use MediaWiki\Auth\AuthenticationRequest;
 use MediaWiki\Config\ConfigFactory;
 use MediaWiki\Http\HttpRequestFactory;
 use MediaWiki\User\User;
+use MediaWiki\User\UserGroupManager;
 use MWTimestamp;
 
 class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthenticationProvider {
@@ -19,9 +20,17 @@ class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthentication
 	/** @var \Config */
 	protected $config;
 
-	public function __construct( ConfigFactory $configFactory, HttpRequestFactory $httpRequestFactory ) {
+	/** @var UserGroupManager */
+	private $userGroupManager;
+
+	public function __construct(
+		ConfigFactory $configFactory,
+		HttpRequestFactory $httpRequestFactory,
+		UserGroupManager $userGroupManager
+	) {
 		$this->config = $configFactory->makeConfig( 'main' );
 		$this->httpRequestFactory = $httpRequestFactory;
+		$this->userGroupManager = $userGroupManager;
 	}
 
 	public function getAuthenticationRequests( $action, array $options ): array {
@@ -88,8 +97,10 @@ class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthentication
 		// Check server membership and roles
 		$guildId = $this->config->get( 'DiscordGuildId' );
 		$allowedRoles = $this->config->get( 'DiscordAllowedRoles' );
-		
+
 		$memberData = $this->getGuildMember( $accessToken, $guildId );
+		wfDebugLog( 'DiscordAuth', 'Guild Member Data: ' . json_encode( $memberData ) );
+
 		if ( !$memberData ) {
 			return AuthenticationResponse::newFail( wfMessage( 'discordauth-error-not-member' ) );
 		}
@@ -115,12 +126,28 @@ class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthentication
 		$username = $this->getWikiUsername( $discordUser );
 		$user = User::newFromName( $username );
 
+		$userRoles = $memberData['roles'] ?? [];
+
 		if ( !$user || $user->getId() === 0 ) {
 			if ( $this->manager->getAction() === AuthManager::ACTION_CREATE || $this->config->get( 'DiscordAutoCreate' ) ) {
+				// Store roles in session for autoCreatedAccount to use
+				$request->setSessionData( 'discord_roles_for_sync', $userRoles );
 				// Create user if allowed
 				return AuthenticationResponse::newPass( $username );
 			}
 			return AuthenticationResponse::newFail( wfMessage( 'discordauth-error-no-account' ) );
+		}
+
+		// Synchronize user groups based on Discord roles (only if mode is 'always')
+		$syncMode = $this->config->get( 'DiscordGroupSyncMode' );
+		wfDebugLog( 'DiscordAuth', sprintf(
+			'Sync mode: %s, Will sync: %s',
+			$syncMode,
+			( $syncMode === 'always' ) ? 'YES' : 'NO'
+		) );
+
+		if ( $syncMode === 'always' ) {
+			$this->syncUserGroups( $user, $userRoles );
 		}
 
 		return AuthenticationResponse::newPass( $username );
@@ -151,11 +178,22 @@ class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthentication
 
 	private function getGuildMember( string $accessToken, string $guildId ): ?array {
 		$url = "https://discord.com/api/users/@me/guilds/$guildId/member";
+		wfDebugLog( 'DiscordAuth', sprintf( 'Fetching guild member from: %s', $url ) );
+
 		$options = [
 			'headers' => [ 'Authorization' => 'Bearer ' . $accessToken ]
 		];
 		$response = $this->httpRequestFactory->get( $url, $options );
-		return $response ? json_decode( $response, true ) : null;
+
+		if ( !$response ) {
+			wfDebugLog( 'DiscordAuth', 'Failed to fetch guild member data - no response' );
+			return null;
+		}
+
+		$data = json_decode( $response, true );
+		wfDebugLog( 'DiscordAuth', 'Guild member response: ' . $response );
+
+		return $data;
 	}
 
 	private function getRedirectUri(): string {
@@ -181,7 +219,20 @@ class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthentication
 	}
 
 	public function autoCreatedAccount( $user, $source ): void {
-		// Logic after auto-creation if needed
+		// Synchronize groups for newly created accounts (if not disabled)
+		$syncMode = $this->config->get( 'DiscordGroupSyncMode' );
+
+		if ( $syncMode !== 'disabled' ) {
+			// Get Discord roles from session (stored during continuePrimaryAuthentication)
+			$request = $this->manager->getRequest();
+			$discordRoles = $request->getSessionData( 'discord_roles_for_sync' );
+
+			if ( $discordRoles ) {
+				$this->syncUserGroups( $user, $discordRoles );
+				// Clear from session
+				$request->setSessionData( 'discord_roles_for_sync', null );
+			}
+		}
 	}
 
 	public function beginPrimaryAccountCreation( $user, $creator, array $reqs ) {
@@ -198,5 +249,96 @@ class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthentication
 
 	public function providerChangeAuthenticationData( AuthenticationRequest $req ) {
 		// We don't support changing authentication data
+	}
+
+	/**
+	 * Synchronize MediaWiki user groups based on Discord roles
+	 *
+	 * @param User $user MediaWiki user object
+	 * @param array $discordRoles Array of Discord role IDs the user has
+	 * @return void
+	 */
+	private function syncUserGroups( User $user, array $discordRoles ): void {
+		// Use $GLOBALS to avoid JSON parsing issues with large Discord IDs
+		$roleToGroupMapping = $GLOBALS['wgDiscordRoleToGroupMapping'] ?? [];
+
+		// If no mapping configured, skip synchronization
+		if ( empty( $roleToGroupMapping ) ) {
+			return;
+		}
+
+		// Debug logging
+		wfDebugLog( 'DiscordAuth', sprintf(
+			'Syncing groups for user %s with Discord roles: %s',
+			$user->getName(),
+			implode( ', ', $discordRoles )
+		) );
+
+		// Determine which groups the user should have based on their Discord roles
+		$targetGroups = [];
+		foreach ( $discordRoles as $roleId ) {
+			// Ensure roleId is a string for comparison
+			$roleId = (string)$roleId;
+
+			// Check both string and potential numeric keys
+			if ( isset( $roleToGroupMapping[$roleId] ) ) {
+				$groups = $roleToGroupMapping[$roleId];
+				wfDebugLog( 'DiscordAuth', sprintf(
+					'Role %s maps to groups: %s',
+					$roleId,
+					is_array( $groups ) ? implode( ', ', $groups ) : $groups
+				) );
+
+				// Handle both string and array values
+				if ( is_array( $groups ) ) {
+					$targetGroups = array_merge( $targetGroups, $groups );
+				} else {
+					$targetGroups[] = $groups;
+				}
+			} else {
+				wfDebugLog( 'DiscordAuth', sprintf(
+					'Role %s not found in mapping',
+					$roleId
+				) );
+			}
+		}
+		$targetGroups = array_unique( $targetGroups );
+
+		// Get all groups that are managed by the mapping (to determine which to remove)
+		$managedGroups = [];
+		foreach ( $roleToGroupMapping as $groups ) {
+			if ( is_array( $groups ) ) {
+				$managedGroups = array_merge( $managedGroups, $groups );
+			} else {
+				$managedGroups[] = $groups;
+			}
+		}
+		$managedGroups = array_unique( $managedGroups );
+
+		// Get current user groups
+		$currentGroups = $this->userGroupManager->getUserGroups( $user );
+
+		wfDebugLog( 'DiscordAuth', sprintf(
+			'Current groups: %s, Target groups: %s, Managed groups: %s',
+			implode( ', ', $currentGroups ),
+			implode( ', ', $targetGroups ),
+			implode( ', ', $managedGroups )
+		) );
+
+		// Add missing groups
+		foreach ( $targetGroups as $group ) {
+			if ( !in_array( $group, $currentGroups ) ) {
+				wfDebugLog( 'DiscordAuth', sprintf( 'Adding user %s to group: %s', $user->getName(), $group ) );
+				$this->userGroupManager->addUserToGroup( $user, $group );
+			}
+		}
+
+		// Remove groups that are managed but user no longer qualifies for
+		foreach ( $managedGroups as $group ) {
+			if ( in_array( $group, $currentGroups ) && !in_array( $group, $targetGroups ) ) {
+				wfDebugLog( 'DiscordAuth', sprintf( 'Removing user %s from group: %s', $user->getName(), $group ) );
+				$this->userGroupManager->removeUserFromGroup( $user, $group );
+			}
+		}
 	}
 }

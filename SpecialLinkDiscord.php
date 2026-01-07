@@ -7,6 +7,7 @@ use MediaWiki\Config\Config;
 use MediaWiki\Http\HttpRequestFactory;
 use MediaWiki\User\UserOptionsLookup;
 use MediaWiki\User\UserOptionsManager;
+use MediaWiki\User\UserGroupManager;
 
 class SpecialLinkDiscord extends SpecialPage {
 
@@ -22,17 +23,22 @@ class SpecialLinkDiscord extends SpecialPage {
 	/** @var UserOptionsManager */
 	private $userOptionsManager;
 
+	/** @var UserGroupManager */
+	private $userGroupManager;
+
 	public function __construct(
 		Config $config,
 		HttpRequestFactory $httpRequestFactory,
 		UserOptionsLookup $userOptionsLookup,
-		UserOptionsManager $userOptionsManager
+		UserOptionsManager $userOptionsManager,
+		UserGroupManager $userGroupManager
 	) {
 		parent::__construct( 'LinkDiscord' );
 		$this->config = $config;
 		$this->httpRequestFactory = $httpRequestFactory;
 		$this->userOptionsLookup = $userOptionsLookup;
 		$this->userOptionsManager = $userOptionsManager;
+		$this->userGroupManager = $userGroupManager;
 	}
 
 	public function execute( $par ) {
@@ -245,6 +251,18 @@ class SpecialLinkDiscord extends SpecialPage {
 		$this->userOptionsManager->setOption( $user, 'discord_username', $discordUser['username'] );
 		$this->userOptionsManager->saveOptions( $user );
 
+		// Synchronize user groups based on Discord roles (if not disabled)
+		$syncMode = $this->config->get( 'DiscordGroupSyncMode' );
+		if ( $syncMode !== 'disabled' ) {
+			$guildId = $this->config->get( 'DiscordGuildId' );
+			if ( $guildId ) {
+				$memberData = $this->getGuildMember( $accessToken, $guildId );
+				if ( $memberData && isset( $memberData['roles'] ) ) {
+					$this->syncUserGroups( $user, $memberData['roles'] );
+				}
+			}
+		}
+
 		$output->addHTML( '
 			<div class="success" style="max-width: 600px; margin: 30px auto; padding: 30px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 10px; color: #155724;">
 				<h2 style="margin-top: 0;">✓ ' . $this->msg( 'discordauth-link-success-header' )->escaped() . '</h2>
@@ -337,10 +355,118 @@ class SpecialLinkDiscord extends SpecialPage {
 			'client_id' => $clientId,
 			'redirect_uri' => $redirectUri,
 			'response_type' => 'code',
-			'scope' => 'identify',
+			'scope' => 'identify guilds.members.read',
 			'state' => $state
 		] );
 
 		$this->getOutput()->redirect( $url );
+	}
+
+	private function getGuildMember( $accessToken, $guildId ) {
+		$url = "https://discord.com/api/users/@me/guilds/$guildId/member";
+		$options = [
+			'method' => 'GET',
+		];
+
+		$request = $this->httpRequestFactory->create( $url, $options );
+		$request->setHeader( 'Authorization', 'Bearer ' . $accessToken );
+		$status = $request->execute();
+
+		if ( !$status->isOK() ) {
+			return null;
+		}
+
+		return json_decode( $request->getContent(), true );
+	}
+
+	/**
+	 * Synchronize MediaWiki user groups based on Discord roles
+	 *
+	 * @param \User $user MediaWiki user object
+	 * @param array $discordRoles Array of Discord role IDs the user has
+	 * @return void
+	 */
+	private function syncUserGroups( $user, array $discordRoles ): void {
+		// Use $GLOBALS to avoid JSON parsing issues with large Discord IDs
+		$roleToGroupMapping = $GLOBALS['wgDiscordRoleToGroupMapping'] ?? [];
+
+		// If no mapping configured, skip synchronization
+		if ( empty( $roleToGroupMapping ) ) {
+			return;
+		}
+
+		// Debug logging
+		wfDebugLog( 'DiscordAuth', sprintf(
+			'[LinkDiscord] Syncing groups for user %s with Discord roles: %s',
+			$user->getName(),
+			implode( ', ', $discordRoles )
+		) );
+
+		// Determine which groups the user should have based on their Discord roles
+		$targetGroups = [];
+		foreach ( $discordRoles as $roleId ) {
+			// Ensure roleId is a string for comparison
+			$roleId = (string)$roleId;
+
+			// Check both string and potential numeric keys
+			if ( isset( $roleToGroupMapping[$roleId] ) ) {
+				$groups = $roleToGroupMapping[$roleId];
+				wfDebugLog( 'DiscordAuth', sprintf(
+					'[LinkDiscord] Role %s maps to groups: %s',
+					$roleId,
+					is_array( $groups ) ? implode( ', ', $groups ) : $groups
+				) );
+
+				// Handle both string and array values
+				if ( is_array( $groups ) ) {
+					$targetGroups = array_merge( $targetGroups, $groups );
+				} else {
+					$targetGroups[] = $groups;
+				}
+			} else {
+				wfDebugLog( 'DiscordAuth', sprintf(
+					'[LinkDiscord] Role %s not found in mapping',
+					$roleId
+				) );
+			}
+		}
+		$targetGroups = array_unique( $targetGroups );
+
+		// Get all groups that are managed by the mapping (to determine which to remove)
+		$managedGroups = [];
+		foreach ( $roleToGroupMapping as $groups ) {
+			if ( is_array( $groups ) ) {
+				$managedGroups = array_merge( $managedGroups, $groups );
+			} else {
+				$managedGroups[] = $groups;
+			}
+		}
+		$managedGroups = array_unique( $managedGroups );
+
+		// Get current user groups
+		$currentGroups = $this->userGroupManager->getUserGroups( $user );
+
+		wfDebugLog( 'DiscordAuth', sprintf(
+			'[LinkDiscord] Current groups: %s, Target groups: %s, Managed groups: %s',
+			implode( ', ', $currentGroups ),
+			implode( ', ', $targetGroups ),
+			implode( ', ', $managedGroups )
+		) );
+
+		// Add missing groups
+		foreach ( $targetGroups as $group ) {
+			if ( !in_array( $group, $currentGroups ) ) {
+				wfDebugLog( 'DiscordAuth', sprintf( '[LinkDiscord] Adding user %s to group: %s', $user->getName(), $group ) );
+				$this->userGroupManager->addUserToGroup( $user, $group );
+			}
+		}
+
+		// Remove groups that are managed but user no longer qualifies for
+		foreach ( $managedGroups as $group ) {
+			if ( in_array( $group, $currentGroups ) && !in_array( $group, $targetGroups ) ) {
+				wfDebugLog( 'DiscordAuth', sprintf( '[LinkDiscord] Removing user %s from group: %s', $user->getName(), $group ) );
+				$this->userGroupManager->removeUserFromGroup( $user, $group );
+			}
+		}
 	}
 }
