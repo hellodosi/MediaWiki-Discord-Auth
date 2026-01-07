@@ -90,5 +90,7 @@
 	"discordauth-block-success": "User <strong>$1</strong> has been blocked successfully.",
 	"discordauth-block-error": "Failed to block user. Please try again.",
 	"discordauth-block-error-user": "User not found.",
-	"discordauth-session-expired": "Your Discord authentication session has expired. Please log in again."
+	"discordauth-session-expired": "Your Discord authentication session has expired. Please log in again.",
+	"discordauth-login-button": "Log in with Discord",
+	"discordauth-login-or-form": "or use the form below"
 }

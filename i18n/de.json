@@ -90,5 +90,7 @@
 	"discordauth-block-success": "Benutzer <strong>$1</strong> wurde erfolgreich gesperrt.",
 	"discordauth-block-error": "Fehler beim Sperren des Benutzers. Bitte versuchen Sie es erneut.",
 	"discordauth-block-error-user": "Benutzer nicht gefunden.",
-	"discordauth-session-expired": "Ihre Discord-Authentifizierungssitzung ist abgelaufen. Bitte melden Sie sich erneut an."
+	"discordauth-session-expired": "Ihre Discord-Authentifizierungssitzung ist abgelaufen. Bitte melden Sie sich erneut an.",
+	"discordauth-login-button": "Mit Discord anmelden",
+	"discordauth-login-or-form": "oder verwenden Sie das Formular unten"
 }
