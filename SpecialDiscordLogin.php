@@ -309,6 +309,12 @@ class SpecialDiscordLogin extends SpecialPage {
             $username = 'DiscordUser' . $discordUser['id'];
         }
 
+        // Check if username starts with a digit (forbidden by MediaWiki)
+        if ( preg_match( '/^[0-9]/', $username ) ) {
+            // Prepend 'User' to make it valid
+            $username = 'User' . $username;
+        }
+
         // Use MediaWiki's User::newFromName() with RIGOR_CREATABLE for validation
         // This is more compatible across MediaWiki versions
         $testUser = $this->userFactory->newFromName( $username, \MediaWiki\User\UserFactory::RIGOR_CREATABLE );
@@ -432,9 +438,9 @@ class SpecialDiscordLogin extends SpecialPage {
 							   required
 							   style="width: 100%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box;">
 						<small style="color: #666; display: block; margin-top: 5px;">
-							<strong>Erlaubt:</strong> Buchstaben, Zahlen, Unterstriche (nicht am Ende)<br>
-							<strong>Verboten:</strong> Sonderzeichen wie #, &lt;, &gt;, [, ], |, {, }, %, :, /<br>
-							<strong>Hinweis:</strong> Leerzeichen werden automatisch in Unterstriche umgewandelt
+							<strong>' . $this->msg( 'discordauth-username-rules-allowed' )->text() . '</strong><br>
+							<strong>' . $this->msg( 'discordauth-username-rules-forbidden' )->text() . '</strong><br>
+							<strong>' . $this->msg( 'discordauth-username-rules-hint' )->text() . '</strong>
 						</small>
 						<div id="usernameError" style="color: #dc3545; margin-top: 5px; display: none; font-weight: bold;"></div>
 					</div>
@@ -460,27 +466,41 @@ class SpecialDiscordLogin extends SpecialPage {
 				var errorDiv = document.getElementById("usernameError");
 				var form = document.getElementById("usernameForm");
 
+				// i18n messages
+				var i18n = {
+					startsDigit: "' . $this->msg( 'discordauth-error-username-starts-digit' )->text() . '",
+					forbiddenChars: "' . $this->msg( 'discordauth-error-username-forbidden-chars' )->text() . '",
+					trailingUnderscore: "' . $this->msg( 'discordauth-error-username-trailing-underscore' )->text() . '",
+					empty: "' . $this->msg( 'discordauth-error-username-empty' )->text() . '",
+					tooLong: "' . $this->msg( 'discordauth-error-username-too-long' )->text() . '"
+				};
+
 				function validateUsername(username) {
 					var errors = [];
 
+					// Check if starts with a digit
+					if (/^[0-9]/.test(username)) {
+						errors.push(i18n.startsDigit);
+					}
+
 					// Check for forbidden characters
 					if (/[#<>\[\]|{}%:\/\x00-\x1F\x7F]/.test(username)) {
-						errors.push("Verbotene Sonderzeichen enthalten (#, <, >, [, ], |, {, }, %, :, /)");
+						errors.push(i18n.forbiddenChars);
 					}
 
 					// Check for trailing underscores
 					if (/_$/.test(username)) {
-						errors.push("Darf nicht auf Unterstrich enden");
+						errors.push(i18n.trailingUnderscore);
 					}
 
 					// Check if empty
 					if (username.trim() === "") {
-						errors.push("Benutzername darf nicht leer sein");
+						errors.push(i18n.empty);
 					}
 
 					// Check length (MediaWiki max is 255 bytes)
 					if (new Blob([username]).size > 255) {
-						errors.push("Benutzername zu lang (max. 255 Bytes)");
+						errors.push(i18n.tooLong);
 					}
 
 					return errors;
@@ -534,27 +554,31 @@ class SpecialDiscordLogin extends SpecialPage {
         // Validate against forbidden characters before sanitization
         $validationErrors = [];
 
+        if ( preg_match( '/^[0-9]/', $username ) ) {
+            $validationErrors[] = $this->msg( 'discordauth-error-username-starts-digit' )->text();
+        }
+
         if ( preg_match( '/[#<>\[\]|{}%:\/\x00-\x1F\x7F]/', $username ) ) {
-            $validationErrors[] = 'Der Benutzername enthält verbotene Sonderzeichen (#, &lt;, &gt;, [, ], |, {, }, %, :, /)';
+            $validationErrors[] = $this->msg( 'discordauth-error-username-forbidden-chars' )->text();
         }
 
         if ( preg_match( '/_$/', $username ) ) {
-            $validationErrors[] = 'Der Benutzername darf nicht auf einem Unterstrich enden';
+            $validationErrors[] = $this->msg( 'discordauth-error-username-trailing-underscore' )->text();
         }
 
         if ( strlen( $username ) === 0 ) {
-            $validationErrors[] = 'Der Benutzername darf nicht leer sein';
+            $validationErrors[] = $this->msg( 'discordauth-error-username-empty' )->text();
         }
 
         if ( strlen( $username ) > 255 ) {
-            $validationErrors[] = 'Der Benutzername ist zu lang (maximal 255 Zeichen)';
+            $validationErrors[] = $this->msg( 'discordauth-error-username-too-long' )->text();
         }
 
         // Show specific validation errors
         if ( !empty( $validationErrors ) ) {
             wfDebugLog( 'DiscordAuth', 'Username validation failed for: ' . $username . ' - Errors: ' . implode( ', ', $validationErrors ) );
             $errorHtml = '<div class="error" style="padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; color: #721c24; margin: 20px auto; max-width: 500px;">';
-            $errorHtml .= '<strong>⚠️ Ungültiger Benutzername:</strong><ul style="margin: 10px 0; padding-left: 20px;">';
+            $errorHtml .= '<strong>⚠️ ' . $this->msg( 'discordauth-validation-error-title' )->escaped() . '</strong><ul style="margin: 10px 0; padding-left: 20px;">';
             foreach ( $validationErrors as $error ) {
                 $errorHtml .= '<li>' . htmlspecialchars( $error ) . '</li>';
             }
@@ -573,7 +597,7 @@ class SpecialDiscordLogin extends SpecialPage {
 
         // Ensure username is not empty after sanitization
         if ( $username === '' ) {
-            $output->addHTML( '<div class="error" style="padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; color: #721c24; margin: 20px auto; max-width: 500px;">Der Benutzername ist nach der Bereinigung leer.</div>' );
+            $output->addHTML( '<div class="error" style="padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; color: #721c24; margin: 20px auto; max-width: 500px;">' . $this->msg( 'discordauth-error-username-empty' )->escaped() . '</div>' );
             $this->showUsernameSelection( $discordUser, $discordId, $memberData );
             return;
         }
@@ -583,7 +607,7 @@ class SpecialDiscordLogin extends SpecialPage {
 
         if ( !$testUser ) {
             wfDebugLog( 'DiscordAuth', 'Username validation failed for: ' . $username );
-            $output->addHTML( '<div class="error" style="padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; color: #721c24; margin: 20px auto; max-width: 500px;">Der Benutzername entspricht nicht den MediaWiki-Richtlinien (z.B. IP-Adresse oder reservierter Name).</div>' );
+            $output->addHTML( '<div class="error" style="padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; color: #721c24; margin: 20px auto; max-width: 500px;">' . $this->msg( 'discordauth-error-username-invalid-format' )->escaped() . '</div>' );
             $this->showUsernameSelection( $discordUser, $discordId, $memberData );
             return;
         }
@@ -598,7 +622,7 @@ class SpecialDiscordLogin extends SpecialPage {
         $finalUser = $this->userFactory->newFromName( $canonicalName, \MediaWiki\User\UserFactory::RIGOR_CREATABLE );
         if ( !$finalUser || $canonicalName === '' ) {
             wfDebugLog( 'DiscordAuth', 'Username final validation failed for: ' . $canonicalName );
-            $output->addHTML( '<div class="error" style="padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; color: #721c24; margin: 20px auto; max-width: 500px;">Der Benutzername konnte nicht validiert werden. Bitte versuchen Sie einen anderen Namen.</div>' );
+            $output->addHTML( '<div class="error" style="padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; color: #721c24; margin: 20px auto; max-width: 500px;">' . $this->msg( 'discordauth-error-invalid-username' )->escaped() . '</div>' );
             $this->showUsernameSelection( $discordUser, $discordId, $memberData );
             return;
         }

@@ -230,6 +230,12 @@ class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthentication
 			$username = 'DiscordUser' . $discordUser['id'];
 		}
 
+		// Check if username starts with a digit (forbidden by MediaWiki)
+		if ( preg_match( '/^[0-9]/', $username ) ) {
+			// Prepend 'User' to make it valid
+			$username = 'User' . $username;
+		}
+
 		// Use MediaWiki's User::newFromName() with 'creatable' validation
 		// This is more compatible across MediaWiki versions than getCanonicalName()
 		$testUser = User::newFromName( $username, 'creatable' );
