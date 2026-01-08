@@ -207,9 +207,58 @@ class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthentication
 	}
 
 	private function getWikiUsername( array $discordUser ): string {
-		// Create a wiki-compatible username from Discord tag or ID
-		// Discord usernames can have spaces and special chars, MediaWiki is stricter.
-		return 'Discord:' . $discordUser['username'] . '#' . $discordUser['discriminator'];
+		// Create a wiki-compatible username from Discord username
+		// MediaWiki has strict username rules, so we need to sanitize
+		$username = $discordUser['username'];
+
+		// Remove or replace invalid characters per MediaWiki rules
+		// Invalid: #, <, >, [, ], |, {, }, %, :, /, control chars (0x00-0x1F, 0x7F)
+		$username = preg_replace( '/[#<>\[\]|{}%:\/\x00-\x1F\x7F]/', '', $username );
+
+		// Trim whitespace (MediaWiki does this automatically, but we do it explicitly)
+		$username = trim( $username );
+
+		// Collapse multiple spaces/underscores to single space
+		$username = preg_replace( '/[\s_]+/', ' ', $username );
+
+		// Remove trailing spaces and underscores BEFORE canonicalization
+		$username = rtrim( $username, " _\t\n\r\0\x0B" );
+
+		// Ensure username is not empty after sanitization
+		if ( $username === '' ) {
+			// Fallback to Discord ID if username becomes empty
+			$username = 'DiscordUser' . $discordUser['id'];
+		}
+
+		// Use MediaWiki's User::newFromName() with 'creatable' validation
+		// This is more compatible across MediaWiki versions than getCanonicalName()
+		$testUser = User::newFromName( $username, 'creatable' );
+
+		if ( !$testUser ) {
+			// If validation fails, use Discord ID as fallback
+			$username = 'DiscordUser' . $discordUser['id'];
+			$testUser = User::newFromName( $username, 'creatable' );
+		}
+
+		// Get the canonical name from the User object
+		$canonicalName = $testUser ? $testUser->getName() : $username;
+
+		// CRITICAL: Remove trailing underscores AFTER canonicalization
+		// MediaWiki's newFromName() converts spaces to underscores, which could
+		// result in trailing underscores that are forbidden by MediaWiki rules
+		$canonicalName = rtrim( $canonicalName, '_' );
+
+		// Final validation: ensure the cleaned name is still valid
+		// If trailing underscores were removed, we need to revalidate
+		$finalUser = User::newFromName( $canonicalName, 'creatable' );
+		if ( !$finalUser || $canonicalName === '' ) {
+			// If still invalid, use Discord ID as ultimate fallback
+			$username = 'DiscordUser' . $discordUser['id'];
+			$finalUser = User::newFromName( $username, 'creatable' );
+			$canonicalName = $finalUser ? $finalUser->getName() : $username;
+		}
+
+		return $canonicalName;
 	}
 
 	public function accountCreationType(): string {
