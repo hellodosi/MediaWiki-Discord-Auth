@@ -251,9 +251,15 @@ class SpecialLinkDiscord extends SpecialPage {
 		$this->userOptionsManager->setOption( $user, 'discord_username', $discordUser['username'] );
 		$this->userOptionsManager->saveOptions( $user );
 
-		// Synchronize user groups based on Discord roles (if not disabled)
+		// Synchronize user groups based on Discord roles (only if mode is 'always')
 		$syncMode = $this->config->get( 'DiscordGroupSyncMode' );
-		if ( $syncMode !== 'disabled' ) {
+		wfDebugLog( 'DiscordAuth', sprintf(
+			'[LinkDiscord] Sync mode: %s, Will sync: %s',
+			$syncMode,
+			( $syncMode === 'always' ) ? 'YES' : 'NO'
+		) );
+
+		if ( $syncMode === 'always' ) {
 			$guildId = $this->config->get( 'DiscordGuildId' );
 			if ( $guildId ) {
 				$memberData = $this->getGuildMember( $accessToken, $guildId );
