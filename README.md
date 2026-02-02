@@ -1,5 +1,7 @@
 # MediaWiki Discord Authentication Extension
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X8X01TGZLU)
+
 Eine MediaWiki-Erweiterung zur Authentifizierung über Discord OAuth2 mit Server- und Rollenzugehörigkeitsprüfung.
 
 ## Anforderungen
