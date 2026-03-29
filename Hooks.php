@@ -90,17 +90,11 @@ class Hooks {
 	 */
 	public static function onUserGetRights( $user, &$rights ) {
 		global $wgDiscordAuthMode;
-
 		$mode = $wgDiscordAuthMode ?? 'optional';
 
 		if ( $mode === 'required' ) {
-			// Discord-only mode: Remove password change/reset permissions
-			$rights = array_diff( $rights, [
-				'editmyprivateinfo',  // Prevents changing password
-				'editmyoptions',      // Prevents changing email (which could be used for password reset)
-			] );
+			// bleibt als platzhalter für später eventuell erhalten.
 		}
-
 		return true;
 	}
 
