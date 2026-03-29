@@ -100,5 +100,7 @@
 	"discordauth-block-success": "Карыстальнік <strong>$1</strong> быў паспяхова заблакаваны.",
 	"discordauth-block-error": "Не ўдалося заблакаваць карыстальніка. Калі ласка, паспрабуйце яшчэ раз.",
 	"discordauth-block-error-user": "Карыстальнік не знойдзены.",
-	"discordauth-session-expired": "Ваша сесія аўтарызацыі Discord скончылася. Калі ласка, увайдзіце зноў."
+	"discordauth-session-expired": "Ваша сесія аўтарызацыі Discord скончылася. Калі ласка, увайдзіце зноў.",
+    "discordauth-login-button": "Увайсці праз Discord",
+    "discordauth-login-or-form": "або выкарыстоўвайце форму ніжэй"
 }
