@@ -51,6 +51,14 @@
 			"services": [
 				"MainConfig"
 			]
+		},
+		"DiscordUserMerge": {
+			"class": "DiscordAuth\\SpecialDiscordUserMerge",
+			"services": [
+				"MainConfig",
+				"ConnectionProvider",
+				"UserFactory"
+			]
 		}
 	},
 	"AuthManagerAutoConfig": {

@@ -53,6 +53,11 @@ class SpecialLinkDiscord extends SpecialPage {
 			return;
 		}
 
+		// Handle manual link for sysops BEFORE checking current user linking state
+		if ( $this->getUser()->isAllowed( 'block' ) ) {
+			$this->handleAdminManualLink();
+		}
+
 		// Check if already linked
 		$existingDiscordId = $this->userOptionsLookup->getOption( $user, 'discord_id' );
 
@@ -72,6 +77,9 @@ class SpecialLinkDiscord extends SpecialPage {
 
 		if ( $existingDiscordId ) {
 			$this->showAlreadyLinked( $existingDiscordId );
+			if ( $this->getUser()->isAllowed( 'block' ) ) {
+				$this->showAdminPanel();
+			}
 			return;
 		}
 
@@ -83,11 +91,17 @@ class SpecialLinkDiscord extends SpecialPage {
 		if ( $error ) {
 			$output->addHTML( '<div class="error">' . $this->msg( 'discordauth-error-oauth', $error )->escaped() . '</div>' );
 			$this->showLinkForm();
+			if ( $this->getUser()->isAllowed( 'block' ) ) {
+				$this->showAdminPanel();
+			}
 			return;
 		}
 
 		if ( $code ) {
 			$this->handleCallback( $code, $state );
+			if ( $this->getUser()->isAllowed( 'block' ) ) {
+				$this->showAdminPanel();
+			}
 			return;
 		}
 
@@ -99,6 +113,10 @@ class SpecialLinkDiscord extends SpecialPage {
 
 		// Show link form
 		$this->showLinkForm();
+
+		if ( $this->getUser()->isAllowed( 'block' ) ) {
+			$this->showAdminPanel();
+		}
 	}
 
 	private function showLinkForm() {
@@ -474,5 +492,79 @@ class SpecialLinkDiscord extends SpecialPage {
 				$this->userGroupManager->removeUserFromGroup( $user, $group );
 			}
 		}
+	}
+
+	private function handleAdminManualLink() {
+		$request = $this->getRequest();
+		$output = $this->getOutput();
+		$user = $this->getUser();
+
+		if ( $request->wasPosted() && $request->getVal( 'action' ) === 'admin_manual_link' ) {
+			if ( !$user->matchEditToken( $request->getVal( 'token' ) ) ) {
+				$output->addHTML( '<div class="errorbox">' . $this->msg( 'discordauth-admin-manual-link-error-token' )->escaped() . '</div>' );
+				return;
+			}
+
+			$targetUsername = trim( $request->getVal( 'admin_wiki_user' ) );
+			$targetDiscordId = trim( $request->getVal( 'admin_discord_id' ) );
+			$targetDiscordUsername = trim( $request->getVal( 'admin_discord_username' ) );
+
+			$targetUser = \User::newFromName( $targetUsername );
+			if ( !$targetUser || $targetUser->getId() === 0 ) {
+				$output->addHTML( '<div class="errorbox">' . $this->msg( 'discordauth-admin-manual-link-error-user' )->escaped() . '</div>' );
+				return;
+			}
+
+			if ( empty( $targetDiscordId ) ) {
+				// Remove link
+				$this->userOptionsManager->setOption( $targetUser, 'discord_id', null );
+				$this->userOptionsManager->setOption( $targetUser, 'discord_username', null );
+				$this->userOptionsManager->saveOptions( $targetUser );
+				$output->addHTML( '<div class="successbox">' . $this->msg( 'discordauth-admin-manual-link-success-removed', $targetUser->getName() )->parse() . '</div>' );
+			} else {
+				// Save link
+				$this->userOptionsManager->setOption( $targetUser, 'discord_id', $targetDiscordId );
+				$this->userOptionsManager->setOption( $targetUser, 'discord_username', $targetDiscordUsername ?: '' );
+				$this->userOptionsManager->saveOptions( $targetUser );
+				$output->addHTML( '<div class="successbox">' . $this->msg( 'discordauth-admin-manual-link-success-saved', $targetUser->getName(), $targetDiscordId )->parse() . '</div>' );
+			}
+		}
+	}
+
+	private function showAdminPanel() {
+		$output = $this->getOutput();
+		$user = $this->getUser();
+		$linkUrl = $this->getPageTitle()->getFullURL();
+
+		$output->addHTML( '
+			<div style="max-width: 600px; margin: 40px auto 30px auto; padding: 30px; background: #f8f9fa; border: 2px dashed #0645ad; border-radius: 10px;">
+				<h3 style="color: #0645ad; margin-top: 0; border-bottom: 1px solid #eaecf0; padding-bottom: 10px;">' . $this->msg( 'discordauth-admin-manual-link-title' )->escaped() . '</h3>
+				<p>' . $this->msg( 'discordauth-admin-manual-link-intro' )->escaped() . '</p>
+				
+				<form method="post" action="' . htmlspecialchars( $linkUrl ) . '">
+					<input type="hidden" name="action" value="admin_manual_link">
+					<input type="hidden" name="token" value="' . htmlspecialchars( $user->getEditToken() ) . '">
+					
+					<div style="margin-bottom: 15px;">
+						<label style="display: block; font-weight: bold; margin-bottom: 5px;" for="admin_wiki_user">' . $this->msg( 'discordauth-admin-manual-link-wiki-user' )->escaped() . '</label>
+						<input type="text" id="admin_wiki_user" name="admin_wiki_user" required style="width: 100%; padding: 8px; border: 1px solid #cccccc; border-radius: 4px;" placeholder="z. B. MaxMustermann">
+					</div>
+					
+					<div style="margin-bottom: 15px;">
+						<label style="display: block; font-weight: bold; margin-bottom: 5px;" for="admin_discord_id">' . $this->msg( 'discordauth-admin-manual-link-discord-id' )->escaped() . '</label>
+						<input type="text" id="admin_discord_id" name="admin_discord_id" style="width: 100%; padding: 8px; border: 1px solid #cccccc; border-radius: 4px;" placeholder="' . $this->msg( 'discordauth-admin-manual-link-discord-id-hint' )->escaped() . '">
+					</div>
+
+					<div style="margin-bottom: 20px;">
+						<label style="display: block; font-weight: bold; margin-bottom: 5px;" for="admin_discord_username">' . $this->msg( 'discordauth-admin-manual-link-discord-username' )->escaped() . '</label>
+						<input type="text" id="admin_discord_username" name="admin_discord_username" style="width: 100%; padding: 8px; border: 1px solid #cccccc; border-radius: 4px;" placeholder="z. B. max_mustermann">
+					</div>
+					
+					<button type="submit" style="background: #0645ad; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer;">
+						' . $this->msg( 'discordauth-admin-manual-link-submit' )->escaped() . '
+					</button>
+				</form>
+			</div>
+		' );
 	}
 }

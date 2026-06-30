@@ -509,6 +509,24 @@ Die Extension verwendet folgende i18n-Schlüssel für Fehlermeldungen:
 | `$wgDiscordRoleToGroupMapping` | array | `[]` | Zuordnung Discord Role ID → MediaWiki Gruppe (optional) |
 | `$wgDiscordGroupSyncMode` | string | `'always'` | Gruppen-Synchronisations-Modus: `'always'` (bei jedem Login), `'once'` (nur bei Registrierung), `'disabled'` (keine Synchronisation) |
 
+## Admin-Tools (Benutzer zusammenführen & löschen)
+
+Die Erweiterung bietet Administratoren ein integriertes Tool zur Bereinigung von Benutzerkonten (z. B. bei durch Bugs doppelt erstellten Konten).
+
+### Spezialseite `Special:DiscordUserMerge`
+
+Administratoren (Benutzer mit dem Recht `block` bzw. Admin-Status) können über die Spezialseite `Spezial:DiscordUserMerge` zwei Aktionen durchführen:
+
+1. **Zusammenführen von Konten (Quell- und Ziel-Benutzer angegeben):**
+   * Alle Bearbeitungen, Dateiuploads, Logbucheinträge und archivierten Versionen des **Quell-Benutzers** werden auf den **Ziel-Benutzer** umgeschrieben.
+   * Der **Quell-Benutzer** wird vollständig aus der Datenbank gelöscht (inkl. Verknüpfungen und Gruppen).
+   * Die Benutzerseite des Quell-Benutzers (z. B. `Benutzer:Quellname`) wird automatisch auf die Benutzerseite des Ziel-Benutzers (z. B. `Benutzer:Zielname`) weitergeleitet.
+
+2. **Reines Löschen eines Kontos (nur Quell-Benutzer angegeben):**
+   * Alle Bearbeitungen des Quell-Benutzers werden anonymisiert auf das Pseudonym **„Gelöschter Benutzer“** (ohne Datenbank-Konto-Verbindung, ID 0) umgeschrieben.
+   * Die Benutzerseite des Quell-Benutzers wird mit dem Löschgrund *„Benutzer entfernt“* gelöscht.
+   * Der Quell-Benutzer wird vollständig aus der Datenbank gelöscht.
+
 ## Entwicklung
 
 ### Dateistruktur
