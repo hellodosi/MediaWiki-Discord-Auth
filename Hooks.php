@@ -200,11 +200,12 @@ class Hooks {
 	}
 
 	/**
-	 * Register parser functions
+	 * Register parser functions and tags
 	 */
 	public static function onParserFirstCallInit( \Parser $parser ) {
 		$parser->setFunctionHook( 'discordlink', [ self::class, 'renderDiscordLink' ] );
 		$parser->setFunctionHook( 'discordid', [ self::class, 'renderDiscordId' ] );
+		$parser->setHook( 'userlist', [ \DiscordAuth\UserList::class, 'renderUserList' ] );
 		return true;
 	}
 

@@ -108,6 +108,9 @@
 			"i18n"
 		]
 	},
+	"ExtensionMessagesFiles": {
+		"DiscordAuthMagic": "DiscordAuth.i18n.magic.php"
+	},
 	"Hooks": {
 		"AuthChangeFormFields": "DiscordAuth\\Hooks::onAuthChangeFormFields",
 		"UserGetRights": "DiscordAuth\\Hooks::onUserGetRights",
