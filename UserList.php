@@ -12,21 +12,28 @@ class UserList {
 	public static function renderUserList( ?string $input, array $args, Parser $parser, PPFrame $frame ) {
 		$group = trim( $args['group'] ?? '' );
 		$usersArg = trim( $args['users'] ?? '' );
+		$excludeArg = trim( $args['exclude'] ?? '' );
 		$showArg = trim( $args['show'] ?? 'name' );
 		$fallbackImage = trim( $args['fallbackimage'] ?? 'Person.jpg' );
 		$displayNameType = trim( $args['displayname'] ?? 'real' );
+		$layout = trim( $args['layout'] ?? 'card' );
 
 		$showFields = self::parseCsv( $showArg );
 
-		if ( $usersArg !== '' ) {
+		if ( $usersArg !== '' && $usersArg !== '*' ) {
 			$usernames = self::parseCsv( $usersArg );
-		} elseif ( $group !== '' ) {
+		} elseif ( $group !== '' && $group !== '*' && strtolower( $group ) !== 'all' ) {
 			$usernames = self::getUsersInGroup( $group );
 		} else {
-			return [
-				'<div class="ul-error">Fehler: Gruppe oder Benutzer angeben.</div>',
-				'isHTML' => true, 'noparse' => true
-			];
+			$usernames = self::getAllUsers();
+		}
+
+		// Exclude specified users
+		$excludeUsers = array_map( 'mb_strtolower', self::parseCsv( $excludeArg ) );
+		if ( !empty( $excludeUsers ) ) {
+			$usernames = array_filter( $usernames, static function ( $u ) use ( $excludeUsers ) {
+				return !in_array( mb_strtolower( $u ), $excludeUsers, true );
+			} );
 		}
 
 		if ( !$usernames ) {
@@ -37,11 +44,18 @@ class UserList {
 		}
 
 		$html = self::getInlineCss();
-		$html .= '<div class="ul-wrapper"><div class="ul-grid">';
-
-		foreach ( $usernames as $username ) {
-			$profile = self::getUserProfileData( $username );
-			$html .= self::renderCard( $username, $profile, $showFields, $fallbackImage, $displayNameType );
+		if ( $layout === 'list' ) {
+			$html .= '<div class="ul-wrapper"><div class="ul-list-container">';
+			foreach ( $usernames as $username ) {
+				$profile = self::getUserProfileData( $username );
+				$html .= self::renderListRow( $username, $profile, $showFields, $fallbackImage );
+			}
+		} else {
+			$html .= '<div class="ul-wrapper"><div class="ul-grid">';
+			foreach ( $usernames as $username ) {
+				$profile = self::getUserProfileData( $username );
+				$html .= self::renderCard( $username, $profile, $showFields, $fallbackImage, $displayNameType );
+			}
 		}
 
 		$html .= '</div></div>';
@@ -66,6 +80,26 @@ class UserList {
 			->from( 'user' )
 			->join( 'user_groups', null, 'ug_user = user_id' )
 			->where( [ 'ug_group' => $group ] )
+			->orderBy( 'user_name', 'ASC' )
+			->caller( __METHOD__ )
+			->fetchResultSet();
+
+		foreach ( $res as $row ) {
+			$usernames[] = $row->user_name;
+		}
+		return $usernames;
+	}
+
+	private static function getAllUsers(): array {
+		$services = MediaWikiServices::getInstance();
+		$db = method_exists( $services, 'getConnectionProvider' ) 
+			? $services->getConnectionProvider()->getReplicaDatabase() 
+			: wfGetDB( DB_REPLICA );
+
+		$usernames = [];
+		$res = $db->newSelectQueryBuilder()
+			->select( [ 'user_name' ] )
+			->from( 'user' )
 			->orderBy( 'user_name', 'ASC' )
 			->caller( __METHOD__ )
 			->fetchResultSet();
@@ -146,6 +180,55 @@ class UserList {
 		}
 
 		$html .= '</div></div>';
+		return $html;
+	}
+
+	private static function renderListRow( $username, $profile, $showFields, $fallbackImage ): string {
+		$userPageTitle = Title::makeTitle( NS_USER, $username );
+		$userPageUrl = $userPageTitle ? $userPageTitle->getLocalURL() : '#';
+
+		$image = self::firstNonEmptyValue( $profile, [ 'bild', 'image', 'foto' ] ) ?: $fallbackImage;
+		$realName = self::firstNonEmptyValue( $profile, [ 'name', 'realname' ] );
+		$mail = self::firstNonEmptyValue( $profile, [ 'mail', 'email' ] );
+		$discordId = self::getDiscordIdForUser( $username );
+
+		$html = '<div class="ul-list-row">';
+
+		// Spalte 1: Kleines Bild links
+		$html .= '<div class="ul-list-avatar"><a href="' . htmlspecialchars( $userPageUrl ) . '">' . self::renderWikiFile( $image, 50, $realName ?: $username ) . '</a></div>';
+
+		// Spalte 2: Name und sekundäre Info
+		$html .= '<div class="ul-list-info">';
+		$displayName = htmlspecialchars( $username );
+		if ( $realName !== '' ) {
+			$displayName .= ' <span class="ul-list-realname">(' . htmlspecialchars( $realName ) . ')</span>';
+		}
+		$html .= '<div class="ul-list-name"><a href="' . htmlspecialchars( $userPageUrl ) . '">' . $displayName . '</a></div>';
+
+		// Unter dem Namen sekundäre Information
+		$secondaryInfo = [];
+		foreach ( $showFields as $field ) {
+			$v = $profile[mb_strtolower(trim($field))] ?? '';
+			if ( $v !== '' && !in_array( mb_strtolower( $field ), [ 'name', 'mail', 'email', 'discord' ] ) ) {
+				$secondaryInfo[] = htmlspecialchars( $v );
+			}
+		}
+		if ( !empty( $secondaryInfo ) ) {
+			$html .= '<div class="ul-list-secondary">' . implode( ' • ', $secondaryInfo ) . '</div>';
+		}
+		$html .= '</div>';
+
+		// Spalte 3: Symbole für Discord und Mail
+		$html .= '<div class="ul-list-actions plainlinks">';
+		if ( $discordId !== '' ) {
+			$html .= '<a class="ul-btn" href="https://discord.com/users/' . rawurlencode( $discordId ) . '" target="_blank" rel="noopener" title="Discord"><span class="ul-icon-circle">' . self::getIcon( 'discord' ) . '</span></a>';
+		}
+		if ( $mail !== '' ) {
+			$html .= '<a class="ul-btn" href="mailto:' . htmlspecialchars( $mail ) . '" title="E-Mail"><span class="ul-icon-circle">' . self::getIcon( 'mail' ) . '</span></a>';
+		}
+		$html .= '</div>';
+
+		$html .= '</div>';
 		return $html;
 	}
 
@@ -251,6 +334,81 @@ class UserList {
 }
 
 .ul-empty, .ul-error { padding: 15px; background: #fff3cd; border: 1px solid #ffe69c; border-radius: 8px; }
+
+/* List Layout Styles */
+.mw-parser-output .ul-list-container {
+	display: grid !important;
+	grid-template-columns: 1fr 1fr !important;
+	gap: 12px !important;
+	margin: 1.5em 0 !important;
+	width: 100% !important;
+}
+@media (max-width: 600px) {
+	.mw-parser-output .ul-list-container {
+		grid-template-columns: 1fr !important;
+	}
+}
+.mw-parser-output .ul-list-row {
+	display: flex !important;
+	align-items: center !important;
+	background: #fff !important;
+	border: 1px solid #e1e8ed !important;
+	border-radius: 12px !important;
+	padding: 12px 20px !important;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.05) !important;
+}
+.mw-parser-output .ul-list-avatar img {
+	width: 50px !important;
+	height: 50px !important;
+	border-radius: 50% !important;
+	object-fit: cover !important;
+	border: 2px solid #f8f9fa !important;
+}
+.mw-parser-output .ul-list-avatar .ul-no-img {
+	width: 50px !important;
+	height: 50px !important;
+	border-radius: 50% !important;
+	background: #eee !important;
+	border: 2px solid #f8f9fa !important;
+}
+.mw-parser-output .ul-list-info {
+	flex-grow: 1 !important;
+	margin-left: 15px !important;
+	display: flex !important;
+	flex-direction: column !important;
+	align-items: flex-start !important;
+	text-align: left !important;
+}
+.mw-parser-output .ul-list-name {
+	font-size: 1.05rem !important;
+	font-weight: 700 !important;
+	margin: 0 !important;
+}
+.mw-parser-output .ul-list-name a {
+	color: #333 !important;
+	text-decoration: none !important;
+}
+.mw-parser-output .ul-list-realname {
+	font-size: 0.9rem !important;
+	font-weight: normal !important;
+	color: #666 !important;
+	margin-left: 5px !important;
+}
+.mw-parser-output .ul-list-secondary {
+	font-size: 0.85rem !important;
+	font-weight: 300 !important;
+	color: #777 !important;
+	margin-top: 3px !important;
+	line-height: 1.3 !important;
+}
+.mw-parser-output .ul-list-actions {
+	display: flex !important;
+	gap: 10px !important;
+	margin-left: auto !important;
+	align-items: center !important;
+	padding-top: 0 !important;
+	margin-top: 0 !important;
+}
 </style>';
 	}
 }

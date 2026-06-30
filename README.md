@@ -145,6 +145,64 @@ Ab jetzt können Sie sich mit Discord anmelden, auch wenn Sie ursprünglich mit 
 Neue Benutzer können ihren Benutzernamen frei wählen (ohne "Discord:" Präfix).
 Die Verknüpfung erfolgt über die Discord-ID, nicht über den Benutzernamen.
 
+## Discord-Profilanzeige & Benutzerlisten
+
+Diese Erweiterung bietet verschiedene Möglichkeiten, die verknüpften Discord-Profile der Benutzer im Wiki anzuzeigen und zu verlinken.
+
+### 1. Automatischer Link in der Seitenleiste (Toolbox)
+Sobald sich ein Besucher auf der Benutzerseite eines Wiki-Nutzers (z. B. `Benutzer:Name`) befindet, der sein Konto mit Discord verknüpft hat, erscheint in der Seitenleiste (unter dem Menüpunkt **Werkzeuge** / **Toolbox**) automatisch ein direkter Link zum Discord-Profil:
+* **Format:** `[Benutzername] auf Discord`
+* **Ziel:** Führt direkt zum Discord-Nutzerprofil (`https://discord.com/users/<Discord-ID>`) in einem neuen Tab.
+
+### 2. Parser-Funktionen (Wikitext)
+Du kannst Discord-Links und -IDs flexibel über Wikitext in jede beliebige Wiki-Seite oder Vorlage einbetten:
+
+* **`{{#discordlink:Benutzername|Linktext}}`**
+  Erstellt einen formatierten externen Link zum Discord-Profil des Nutzers.
+  * *Beispiel:* `{{#discordlink:Dominik|Kontakt via Discord}}`
+  * *Standardverhalten:* Wenn der Benutzername weggelassen wird, wird versucht, ihn von der aktuellen Benutzerseite zu beziehen. Wenn kein Linktext angegeben ist, wird standardmäßig „Discord-Profil“ verwendet.
+* **`{{#discordid:Benutzername}}`**
+  Gibt die rohe numerische Discord-ID des Benutzers aus (hilfreich für Vorlagen oder eigene Abfragen).
+  * *Beispiel:* `{{#discordid:Dominik}}`
+
+### 3. Benutzerlisten / Kacheln (`<userlist>`)
+Mit dem Tag `<userlist>` kannst du ansprechende Benutzerlisten darstellen (Standard: Kachel-Design, optional: kompaktes Listen-Design). Die Extension bindet bei verknüpften Benutzern automatisch einen Discord-Button ein:
+
+* **Benutzer einer Gruppe anzeigen (Standard Kachel-Grid):**
+  ```html
+  <userlist group="sysop" show="name,mail" displayname="real" />
+  ```
+* **Bestimmte Benutzer anzeigen:**
+  ```html
+  <userlist users="Benutzer1,Benutzer2" show="name,mail,tätigkeit" displayname="both" />
+  ```
+* **Kompakte, horizontale Listendarstellung (3 Spalten: Bild, Infos, Aktionen):**
+  ```html
+  <userlist group="sysop" show="tätigkeit" layout="list" />
+  ```
+* **Alle registrierten Benutzer anzeigen (ohne Gruppen-Filter):**
+  ```html
+  <userlist />
+  <!-- Alternativ: -->
+  <userlist group="*" />
+  ```
+* **Benutzer anzeigen, aber bestimmte Accounts ausschließen:**
+  ```html
+  <userlist group="sysop" exclude="AdminBot,TestUser" />
+  ```
+
+#### Attribute:
+* **`group`**: Der Name der MediaWiki-Benutzergruppe (z. B. `sysop`, `bureaucrat`, `bot`). Wird `*`, `all` oder das Attribut komplett weggelassen (und auch `users` fehlt), werden alle registrierten Benutzer des Wikis angezeigt.
+* **`users`**: Eine kommagetrennte Liste von Wiki-Benutzernamen (wird ignoriert, wenn `group` angegeben ist). Kann auch `*` sein, um alle Benutzer anzuzeigen.
+* **`exclude`**: Eine kommagetrennte Liste von Wiki-Benutzernamen, die aus der Anzeige ausgeschlossen werden sollen (hilfreich bei Gruppen- oder Gesamtlisten).
+* **`show`**: Welche Felder aus der `{{Benutzerinfobox}}` des Nutzers angezeigt werden sollen. Bei `layout="list"` werden diese Felder in kleinerer Schrift unter dem Namen dargestellt.
+* **`displayname`**: (Nur für `layout="card"` relevant) Wie der Name gerendert wird:
+  * `real` (Standard): Zeigt den echten Namen aus der Infobox (falls vorhanden) oder den Wiki-Namen als Fallback.
+  * `wiki`: Zeigt nur den Wiki-Benutzernamen.
+  * `both`: Zeigt den echten Namen und in Klammern darunter den Wiki-Namen.
+* **`layout`**: Das Layout der Liste. Entweder `card` (Standard, Kachel-Grid) oder `list` (horizontale, kompakte Zeilen; wird auf Desktop-Bildschirmen zweispaltig mit 12px Abstand dargestellt).
+* **`fallbackimage`**: Standard-Dateiname für Benutzer ohne Avatar-Bild in ihrer Infobox (Standard: `Person.jpg`).
+
 ## Automatische Gruppen-Synchronisation
 
 ### Discord Rollen → MediaWiki Gruppen
