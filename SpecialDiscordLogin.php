@@ -178,6 +178,7 @@ class SpecialDiscordLogin extends SpecialPage {
 
         // Update discord_username if not set or outdated
         $this->userOptionsManager->setOption( $user, 'discord_username', $discordUser['username'] ?? '' );
+        $this->userOptionsManager->saveOptions( $user );
 
         // Synchronize user groups based on Discord roles
         $syncMode = $this->config->get( 'DiscordGroupSyncMode' );
@@ -670,28 +671,10 @@ class SpecialDiscordLogin extends SpecialPage {
             $user->confirmEmail();
         }
 
-        // Store Discord ID and username in user_properties table
-        $dbw = $this->dbProvider->getPrimaryDatabase();
-        $dbw->insert(
-            'user_properties',
-            [
-                [
-                    'up_user' => $user->getId(),
-                    'up_property' => 'discord_id',
-                    'up_value' => $discordId
-                ],
-                [
-                    'up_user' => $user->getId(),
-                    'up_property' => 'discord_username',
-                    'up_value' => $discordUser['username'] ?? ''
-                ]
-            ],
-            __METHOD__,
-            [ 'IGNORE' ]
-        );
-
-        // Save all changes to database
-        $user->saveSettings();
+        // Store Discord ID and username in user options
+        $this->userOptionsManager->setOption( $user, 'discord_id', $discordId );
+        $this->userOptionsManager->setOption( $user, 'discord_username', $discordUser['username'] ?? '' );
+        $this->userOptionsManager->saveOptions( $user );
 
         // Synchronize user groups based on Discord roles
         $syncMode = $this->config->get( 'DiscordGroupSyncMode' );

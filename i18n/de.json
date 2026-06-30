@@ -102,5 +102,6 @@
 	"discordauth-block-error-user": "Benutzer nicht gefunden.",
 	"discordauth-session-expired": "Ihre Discord-Authentifizierungssitzung ist abgelaufen. Bitte melden Sie sich erneut an.",
 	"discordauth-login-button": "Mit Discord anmelden",
-	"discordauth-login-or-form": "oder verwenden Sie das Formular unten"
+	"discordauth-login-or-form": "oder verwenden Sie das Formular unten",
+	"discordauth-sidebar-link-text": "$1 auf Discord"
 }

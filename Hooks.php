@@ -198,4 +198,109 @@ class Hooks {
 
 		return true;
 	}
+
+	/**
+	 * Register parser functions
+	 */
+	public static function onParserFirstCallInit( \Parser $parser ) {
+		$parser->setFunctionHook( 'discordlink', [ self::class, 'renderDiscordLink' ] );
+		$parser->setFunctionHook( 'discordid', [ self::class, 'renderDiscordId' ] );
+		return true;
+	}
+
+	/**
+	 * Render parser function {{#discordlink:Username|LinkText}}
+	 */
+	public static function renderDiscordLink( \Parser $parser, $username = '', $linkText = '' ) {
+		if ( $username === '' ) {
+			$title = $parser->getTitle();
+			if ( $title && $title->getNamespace() === NS_USER ) {
+				$username = $title->getRootText();
+			}
+		}
+
+		if ( $username === '' ) {
+			return '';
+		}
+
+		$services = \MediaWiki\MediaWikiServices::getInstance();
+		$userFactory = $services->getUserFactory();
+		$user = $userFactory->newFromName( $username );
+
+		if ( !$user || !$user->isRegistered() ) {
+			return '';
+		}
+
+		$userOptionsLookup = $services->getUserOptionsLookup();
+		$discordId = $userOptionsLookup->getOption( $user, 'discord_id' );
+
+		if ( !$discordId ) {
+			return '';
+		}
+
+		if ( $linkText === '' ) {
+			$linkText = 'Discord-Profil';
+		}
+
+		return "[https://discord.com/users/$discordId " . $linkText . "]";
+	}
+
+	/**
+	 * Render parser function {{#discordid:Username}}
+	 */
+	public static function renderDiscordId( \Parser $parser, $username = '' ) {
+		if ( $username === '' ) {
+			$title = $parser->getTitle();
+			if ( $title && $title->getNamespace() === NS_USER ) {
+				$username = $title->getRootText();
+			}
+		}
+
+		if ( $username === '' ) {
+			return '';
+		}
+
+		$services = \MediaWiki\MediaWikiServices::getInstance();
+		$userFactory = $services->getUserFactory();
+		$user = $userFactory->newFromName( $username );
+
+		if ( !$user || !$user->isRegistered() ) {
+			return '';
+		}
+
+		$userOptionsLookup = $services->getUserOptionsLookup();
+		$discordId = $userOptionsLookup->getOption( $user, 'discord_id' );
+
+		return $discordId ?: '';
+	}
+
+	/**
+	 * Add Discord link to user page toolbox / sidebar
+	 */
+	public static function onSidebarBeforeOutput( \Skin $skin, &$sidebar ) {
+		$title = $skin->getTitle();
+		if ( $title->getNamespace() === NS_USER && !$title->isSubpage() ) {
+			$username = $title->getText();
+			$services = \MediaWiki\MediaWikiServices::getInstance();
+			$userFactory = $services->getUserFactory();
+			$user = $userFactory->newFromName( $username );
+
+			if ( $user && $user->isRegistered() ) {
+				$userOptionsLookup = $services->getUserOptionsLookup();
+				$discordId = $userOptionsLookup->getOption( $user, 'discord_id' );
+
+				if ( $discordId ) {
+					$sidebar['toolbox']['t-discordprofile'] = [
+						'text' => wfMessage( 'discordauth-sidebar-link-text', $username )->text(),
+						'href' => "https://discord.com/users/$discordId",
+						'id' => 't-discordprofile',
+						'active' => false,
+						'rel' => 'noopener noreferrer',
+						'target' => '_blank'
+					];
+				}
+			}
+		}
+		return true;
+	}
 }

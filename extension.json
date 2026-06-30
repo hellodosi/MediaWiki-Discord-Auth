@@ -112,7 +112,9 @@
 		"AuthChangeFormFields": "DiscordAuth\\Hooks::onAuthChangeFormFields",
 		"UserGetRights": "DiscordAuth\\Hooks::onUserGetRights",
 		"GetPreferences": "DiscordAuth\\Hooks::onGetPreferences",
-		"UserLoadAfterLoadFromSession": "DiscordAuth\\Hooks::onUserLoadAfterLoadFromSession"
+		"UserLoadAfterLoadFromSession": "DiscordAuth\\Hooks::onUserLoadAfterLoadFromSession",
+		"ParserFirstCallInit": "DiscordAuth\\Hooks::onParserFirstCallInit",
+		"SidebarBeforeOutput": "DiscordAuth\\Hooks::onSidebarBeforeOutput"
 	},
 	"manifest_version": 2
 }
