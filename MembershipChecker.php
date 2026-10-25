@@ -4,7 +4,6 @@ namespace DiscordAuth;
 
 use MediaWiki\Config\Config;
 use MediaWiki\User\UserGroupManager;
-use MediaWiki\User\UserOptionsLookup;
 
 /**
  * Handles periodic Discord membership checks and user group management
@@ -17,17 +16,17 @@ class MembershipChecker {
 	/** @var UserGroupManager */
 	private $userGroupManager;
 
-	/** @var UserOptionsLookup */
-	private $userOptionsLookup;
+	/** @var DiscordLinkStore */
+	private $linkStore;
 
 	public function __construct(
 		Config $config,
 		UserGroupManager $userGroupManager,
-		UserOptionsLookup $userOptionsLookup
+		?DiscordLinkStore $linkStore = null
 	) {
 		$this->config = $config;
 		$this->userGroupManager = $userGroupManager;
-		$this->userOptionsLookup = $userOptionsLookup;
+		$this->linkStore = $linkStore ?? DiscordLinkStore::getInstance();
 	}
 
 	/**
@@ -40,7 +39,7 @@ class MembershipChecker {
 		}
 
 		// Check if user has Discord linked
-		$discordId = $this->userOptionsLookup->getOption( $user, 'discord_id' );
+		$discordId = $this->linkStore->getDiscordId( $user );
 		if ( !$discordId ) {
 			// User doesn't have Discord linked, don't block
 			return false;

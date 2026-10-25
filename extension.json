@@ -20,7 +20,6 @@
 			"services": [
 				"MainConfig",
 				"HttpRequestFactory",
-				"UserOptionsManager",
 				"UserFactory",
 				"ConnectionProvider",
 				"UserGroupManager"
@@ -31,8 +30,6 @@
 			"services": [
 				"MainConfig",
 				"HttpRequestFactory",
-				"UserOptionsLookup",
-				"UserOptionsManager",
 				"UserGroupManager"
 			]
 		},
@@ -41,7 +38,6 @@
 			"services": [
 				"MainConfig",
 				"HttpRequestFactory",
-				"UserOptionsLookup",
 				"DBLoadBalancerFactory",
 				"UserGroupManager"
 			]
@@ -120,6 +116,7 @@
 		"DiscordAuthMagic": "DiscordAuth.i18n.magic.php"
 	},
 	"Hooks": {
+		"LoadExtensionSchemaUpdates": "DiscordAuth\\Hooks::onLoadExtensionSchemaUpdates",
 		"AuthChangeFormFields": "DiscordAuth\\Hooks::onAuthChangeFormFields",
 		"UserGetRights": "DiscordAuth\\Hooks::onUserGetRights",
 		"GetPreferences": "DiscordAuth\\Hooks::onGetPreferences",

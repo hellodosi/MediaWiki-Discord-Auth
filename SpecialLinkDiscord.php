@@ -5,8 +5,6 @@ namespace DiscordAuth;
 use MediaWiki\SpecialPage\SpecialPage;
 use MediaWiki\Config\Config;
 use MediaWiki\Http\HttpRequestFactory;
-use MediaWiki\User\UserOptionsLookup;
-use MediaWiki\User\UserOptionsManager;
 use MediaWiki\User\UserGroupManager;
 
 class SpecialLinkDiscord extends SpecialPage {
@@ -17,11 +15,8 @@ class SpecialLinkDiscord extends SpecialPage {
 	/** @var HttpRequestFactory */
 	private $httpRequestFactory;
 
-	/** @var UserOptionsLookup */
-	private $userOptionsLookup;
-
-	/** @var UserOptionsManager */
-	private $userOptionsManager;
+	/** @var DiscordLinkStore */
+	private $linkStore;
 
 	/** @var UserGroupManager */
 	private $userGroupManager;
@@ -29,15 +24,12 @@ class SpecialLinkDiscord extends SpecialPage {
 	public function __construct(
 		Config $config,
 		HttpRequestFactory $httpRequestFactory,
-		UserOptionsLookup $userOptionsLookup,
-		UserOptionsManager $userOptionsManager,
 		UserGroupManager $userGroupManager
 	) {
 		parent::__construct( 'LinkDiscord' );
 		$this->config = $config;
 		$this->httpRequestFactory = $httpRequestFactory;
-		$this->userOptionsLookup = $userOptionsLookup;
-		$this->userOptionsManager = $userOptionsManager;
+		$this->linkStore = DiscordLinkStore::getInstance();
 		$this->userGroupManager = $userGroupManager;
 	}
 
@@ -46,6 +38,11 @@ class SpecialLinkDiscord extends SpecialPage {
 		$output = $this->getOutput();
 		$user = $this->getUser();
 		$this->setHeaders();
+
+		if ( !$this->linkStore->isAvailable() ) {
+			$output->addHTML( '<div class="errorbox">' . $this->msg( 'discordauth-error-table-missing' )->parse() . '</div>' );
+			return;
+		}
 
 		// User must be logged in
 		if ( !$user->isRegistered() ) {
@@ -59,13 +56,12 @@ class SpecialLinkDiscord extends SpecialPage {
 		}
 
 		// Check if already linked
-		$existingDiscordId = $this->userOptionsLookup->getOption( $user, 'discord_id' );
+		$existingDiscordId = $this->linkStore->getDiscordId( $user );
 
 		// Handle unlinking
 		if ( $request->getVal( 'action' ) === 'unlink' && $existingDiscordId ) {
 			if ( $request->wasPosted() && $user->matchEditToken( $request->getVal( 'token' ) ) ) {
-				$this->userOptionsManager->setOption( $user, 'discord_id', null );
-				$this->userOptionsManager->saveOptions( $user );
+				$this->linkStore->unlinkUser( $user );
 				$output->addHTML( '<div class="success" style="padding: 10px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 5px; color: #155724; margin: 20px 0;">'
 					. $this->msg( 'discordauth-unlink-success' )->escaped() . '</div>' );
 				$existingDiscordId = null;
@@ -258,16 +254,17 @@ class SpecialLinkDiscord extends SpecialPage {
 		$discordId = $discordUser['id'];
 
 		// Check if this Discord account is already linked to another user
-		$existingUser = $this->getUserByDiscordId( $discordId );
-		if ( $existingUser && $existingUser->getId() !== $user->getId() ) {
+		$existingUserId = $this->linkStore->getUserIdByDiscordId( $discordId, true );
+		if ( $existingUserId !== null && $existingUserId !== $user->getId() ) {
 			$output->addHTML( '<div class="error">' . $this->msg( 'discordauth-link-already-linked-other' )->escaped() . '</div>' );
 			return;
 		}
 
 		// Link the account
-		$this->userOptionsManager->setOption( $user, 'discord_id', $discordId );
-		$this->userOptionsManager->setOption( $user, 'discord_username', $discordUser['username'] );
-		$this->userOptionsManager->saveOptions( $user );
+		if ( !$this->linkStore->linkUser( $user, $discordId, $discordUser['username'] ?? '' ) ) {
+			$output->addHTML( '<div class="error">' . $this->msg( 'discordauth-link-already-linked-other' )->escaped() . '</div>' );
+			return;
+		}
 
 		// Synchronize user groups based on Discord roles (only if mode is 'always')
 		$syncMode = $this->config->get( 'DiscordGroupSyncMode' );
@@ -342,25 +339,6 @@ class SpecialLinkDiscord extends SpecialPage {
 		}
 
 		return json_decode( $request->getContent(), true );
-	}
-
-	private function getUserByDiscordId( $discordId ) {
-		$dbr = wfGetDB( DB_REPLICA );
-		$row = $dbr->selectRow(
-			'user_properties',
-			[ 'up_user' ],
-			[
-				'up_property' => 'discord_id',
-				'up_value' => $discordId
-			],
-			__METHOD__
-		);
-
-		if ( $row ) {
-			return \User::newFromId( $row->up_user );
-		}
-
-		return null;
 	}
 
 	private function getRedirectUri() {
@@ -515,17 +493,33 @@ class SpecialLinkDiscord extends SpecialPage {
 				return;
 			}
 
-			if ( empty( $targetDiscordId ) ) {
-				// Remove link
-				$this->userOptionsManager->setOption( $targetUser, 'discord_id', null );
-				$this->userOptionsManager->setOption( $targetUser, 'discord_username', null );
-				$this->userOptionsManager->saveOptions( $targetUser );
+			if ( $targetDiscordId === '' ) {
+				// Removing a link requires an explicit confirmation to prevent accidental removal
+				if ( !$request->getCheck( 'admin_confirm_unlink' ) ) {
+					$output->addHTML( '<div class="errorbox">' . $this->msg( 'discordauth-admin-manual-link-error-confirm-unlink' )->escaped() . '</div>' );
+					return;
+				}
+
+				$this->linkStore->unlinkUser( $targetUser );
+				wfDebugLog( 'DiscordAuth', sprintf( '[LinkDiscord] Admin %s removed Discord link of %s', $user->getName(), $targetUser->getName() ) );
 				$output->addHTML( '<div class="successbox">' . $this->msg( 'discordauth-admin-manual-link-success-removed', $targetUser->getName() )->parse() . '</div>' );
 			} else {
+				if ( !DiscordLinkStore::isValidDiscordId( $targetDiscordId ) ) {
+					$output->addHTML( '<div class="errorbox">' . $this->msg( 'discordauth-admin-manual-link-error-invalid-id' )->escaped() . '</div>' );
+					return;
+				}
+
 				// Save link
-				$this->userOptionsManager->setOption( $targetUser, 'discord_id', $targetDiscordId );
-				$this->userOptionsManager->setOption( $targetUser, 'discord_username', $targetDiscordUsername ?: '' );
-				$this->userOptionsManager->saveOptions( $targetUser );
+				if ( !$this->linkStore->linkUser( $targetUser, $targetDiscordId, $targetDiscordUsername ) ) {
+					$otherUserId = $this->linkStore->getUserIdByDiscordId( $targetDiscordId, true );
+					$otherUser = $otherUserId ? \User::newFromId( $otherUserId ) : null;
+					$output->addHTML( '<div class="errorbox">' . $this->msg(
+						'discordauth-admin-manual-link-error-id-in-use',
+						$otherUser ? $otherUser->getName() : '?'
+					)->escaped() . '</div>' );
+					return;
+				}
+				wfDebugLog( 'DiscordAuth', sprintf( '[LinkDiscord] Admin %s linked %s to Discord ID %s', $user->getName(), $targetUser->getName(), $targetDiscordId ) );
 				$output->addHTML( '<div class="successbox">' . $this->msg( 'discordauth-admin-manual-link-success-saved', $targetUser->getName(), $targetDiscordId )->parse() . '</div>' );
 			}
 		}
@@ -555,9 +549,16 @@ class SpecialLinkDiscord extends SpecialPage {
 						<input type="text" id="admin_discord_id" name="admin_discord_id" style="width: 100%; padding: 8px; border: 1px solid #cccccc; border-radius: 4px;" placeholder="' . $this->msg( 'discordauth-admin-manual-link-discord-id-hint' )->escaped() . '">
 					</div>
 
-					<div style="margin-bottom: 20px;">
+					<div style="margin-bottom: 15px;">
 						<label style="display: block; font-weight: bold; margin-bottom: 5px;" for="admin_discord_username">' . $this->msg( 'discordauth-admin-manual-link-discord-username' )->escaped() . '</label>
 						<input type="text" id="admin_discord_username" name="admin_discord_username" style="width: 100%; padding: 8px; border: 1px solid #cccccc; border-radius: 4px;" placeholder="z. B. max_mustermann">
+					</div>
+
+					<div style="margin-bottom: 20px;">
+						<label for="admin_confirm_unlink">
+							<input type="checkbox" id="admin_confirm_unlink" name="admin_confirm_unlink" value="1">
+							' . $this->msg( 'discordauth-admin-manual-link-confirm-unlink' )->escaped() . '
+						</label>
 					</div>
 					
 					<button type="submit" style="background: #0645ad; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer;">

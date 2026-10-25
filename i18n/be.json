@@ -127,5 +127,10 @@
 	"discordauth-admin-manual-link-error-token": "Няправільны токен. Калі ласка, паспрабуйце яшчэ раз.",
 	"discordauth-admin-manual-link-error-user": "Пазначаны карыстальнік Wiki не існуе.",
 	"discordauth-admin-manual-link-success-removed": "Прывязка да Discord для <strong>$1</strong> была паспяхова выдаленая.",
-	"discordauth-admin-manual-link-success-saved": "Прывязка да Discord для <strong>$1</strong> была паспяхова ўстаноўленая на Discord ID <code>$2</code>."
+	"discordauth-admin-manual-link-success-saved": "Прывязка да Discord для <strong>$1</strong> была паспяхова ўстаноўленая на Discord ID <code>$2</code>.",
+	"discordauth-admin-manual-link-confirm-unlink": "Пацвердзіць выдаленне прывязкі (абавязкова, калі поле Discord ID пакінута пустым)",
+	"discordauth-admin-manual-link-error-confirm-unlink": "Поле Discord ID пустое. Каб выдаліць існуючую прывязку, адзначце таксама сцяжок пацверджання.",
+	"discordauth-admin-manual-link-error-invalid-id": "Няправільны Discord ID. Discord ID складаецца толькі з 15–22 лічбаў.",
+	"discordauth-admin-manual-link-error-id-in-use": "Гэты Discord ID ужо прывязаны да карыстальніка Wiki «$1». Спачатку выдаліце гэтую прывязку.",
+	"discordauth-error-table-missing": "Табліца базы даных для DiscordAuth не магла быць створана аўтаматычна. Калі ласка, выканайце <code>php maintenance/update.php</code> на серверы."
 }

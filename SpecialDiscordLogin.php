@@ -5,7 +5,6 @@ namespace DiscordAuth;
 use MediaWiki\SpecialPage\SpecialPage;
 use MediaWiki\Config\Config;
 use MediaWiki\Http\HttpRequestFactory;
-use MediaWiki\User\UserOptionsManager;
 use MediaWiki\User\UserFactory;
 use MediaWiki\User\UserGroupManager;
 use Wikimedia\Rdbms\IConnectionProvider;
@@ -18,8 +17,8 @@ class SpecialDiscordLogin extends SpecialPage {
     /** @var HttpRequestFactory */
     private $httpRequestFactory;
 
-    /** @var UserOptionsManager */
-    private $userOptionsManager;
+    /** @var DiscordLinkStore */
+    private $linkStore;
 
     /** @var UserFactory */
     private $userFactory;
@@ -33,7 +32,6 @@ class SpecialDiscordLogin extends SpecialPage {
     public function __construct(
         Config $config,
         HttpRequestFactory $httpRequestFactory,
-        UserOptionsManager $userOptionsManager,
         UserFactory $userFactory,
         IConnectionProvider $dbProvider,
         UserGroupManager $userGroupManager
@@ -41,7 +39,7 @@ class SpecialDiscordLogin extends SpecialPage {
         parent::__construct( 'DiscordLogin' );
         $this->config = $config;
         $this->httpRequestFactory = $httpRequestFactory;
-        $this->userOptionsManager = $userOptionsManager;
+        $this->linkStore = DiscordLinkStore::getInstance();
         $this->userFactory = $userFactory;
         $this->dbProvider = $dbProvider;
         $this->userGroupManager = $userGroupManager;
@@ -51,6 +49,11 @@ class SpecialDiscordLogin extends SpecialPage {
         $request = $this->getRequest();
         $output = $this->getOutput();
         $this->setHeaders();
+
+        if ( !$this->linkStore->isAvailable() ) {
+            $output->addHTML( '<div class="errorbox">' . $this->msg( 'discordauth-error-table-missing' )->parse() . '</div>' );
+            return;
+        }
 
         // Check if username form was submitted
         $submittedUsername = $request->getVal( 'wpUsername' );
@@ -162,7 +165,7 @@ class SpecialDiscordLogin extends SpecialPage {
         }
 
         // Check if user already exists by Discord ID
-        $discordId = $discordUser['id'];
+        $discordId = (string)$discordUser['id'];
         $user = $this->getUserByDiscordId( $discordId );
 
         if ( !$user ) {
@@ -176,9 +179,8 @@ class SpecialDiscordLogin extends SpecialPage {
             }
         }
 
-        // Update discord_username if not set or outdated
-        $this->userOptionsManager->setOption( $user, 'discord_username', $discordUser['username'] ?? '' );
-        $this->userOptionsManager->saveOptions( $user );
+        // Update stored Discord username if it changed
+        $this->linkStore->updateDiscordUsername( $user, $discordUser['username'] ?? '' );
 
         // Synchronize user groups based on Discord roles
         $syncMode = $this->config->get( 'DiscordGroupSyncMode' );
@@ -360,19 +362,13 @@ class SpecialDiscordLogin extends SpecialPage {
     }
 
     private function getUserByDiscordId( $discordId ) {
-        $dbr = $this->dbProvider->getReplicaDatabase();
-        $row = $dbr->selectRow(
-            'user_properties',
-            [ 'up_user' ],
-            [
-                'up_property' => 'discord_id',
-                'up_value' => $discordId
-            ],
-            __METHOD__
-        );
-
-        if ( $row ) {
-            return $this->userFactory->newFromId( $row->up_user );
+        $userId = $this->linkStore->getUserIdByDiscordId( (string)$discordId );
+        if ( $userId !== null ) {
+            $user = $this->userFactory->newFromId( $userId );
+            // Ignore links pointing to deleted accounts
+            if ( $user->isRegistered() ) {
+                return $user;
+            }
         }
 
         return null;
@@ -651,6 +647,13 @@ class SpecialDiscordLogin extends SpecialPage {
             return;
         }
 
+        // Make sure the Discord account was not linked in the meantime (e.g. double submit)
+        if ( $this->linkStore->getUserIdByDiscordId( (string)$discordId, true ) !== null ) {
+            wfDebugLog( 'DiscordAuth', 'Discord ID already linked, refusing to create a second account: ' . $discordId );
+            $output->addHTML( '<div class="error">' . $this->msg( 'discordauth-link-already-linked-other' )->escaped() . '</div>' );
+            return;
+        }
+
         // Create user using User::createNew which is more reliable
         $user = \User::createNew( $username, [
             'email' => $discordUser['email'] ?? '',
@@ -671,10 +674,8 @@ class SpecialDiscordLogin extends SpecialPage {
             $user->confirmEmail();
         }
 
-        // Store Discord ID and username in user options
-        $this->userOptionsManager->setOption( $user, 'discord_id', $discordId );
-        $this->userOptionsManager->setOption( $user, 'discord_username', $discordUser['username'] ?? '' );
-        $this->userOptionsManager->saveOptions( $user );
+        // Store the link between wiki account and Discord account
+        $this->linkStore->linkUser( $user, (string)$discordId, $discordUser['username'] ?? '' );
 
         // Synchronize user groups based on Discord roles
         $syncMode = $this->config->get( 'DiscordGroupSyncMode' );

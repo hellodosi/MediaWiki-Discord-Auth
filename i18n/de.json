@@ -127,5 +127,10 @@
 	"discordauth-admin-manual-link-error-token": "Ungültiges Token. Bitte erneut versuchen.",
 	"discordauth-admin-manual-link-error-user": "Der angegebene Wiki-Benutzer existiert nicht.",
 	"discordauth-admin-manual-link-success-removed": "Die Discord-Verknüpfung für <strong>$1</strong> wurde erfolgreich aufgehoben.",
-	"discordauth-admin-manual-link-success-saved": "Die Discord-Verknüpfung für <strong>$1</strong> wurde erfolgreich auf Discord-ID <code>$2</code> gesetzt."
+	"discordauth-admin-manual-link-success-saved": "Die Discord-Verknüpfung für <strong>$1</strong> wurde erfolgreich auf Discord-ID <code>$2</code> gesetzt.",
+	"discordauth-admin-manual-link-confirm-unlink": "Aufheben der Verknüpfung bestätigen (erforderlich, wenn das Feld Discord-ID leer bleibt)",
+	"discordauth-admin-manual-link-error-confirm-unlink": "Das Feld Discord-ID ist leer. Um die bestehende Verknüpfung aufzuheben, setze bitte zusätzlich das Bestätigungshäkchen.",
+	"discordauth-admin-manual-link-error-invalid-id": "Ungültige Discord-ID. Eine Discord-ID besteht ausschließlich aus 15 bis 22 Ziffern.",
+	"discordauth-admin-manual-link-error-id-in-use": "Diese Discord-ID ist bereits mit dem Wiki-Benutzer „$1“ verknüpft. Bitte hebe diese Verknüpfung zuerst auf.",
+	"discordauth-error-table-missing": "Die Datenbanktabelle für DiscordAuth konnte nicht automatisch erstellt werden. Bitte führe auf dem Server <code>php maintenance/update.php</code> aus."
 }

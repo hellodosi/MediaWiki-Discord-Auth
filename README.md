@@ -1,573 +1,389 @@
 # MediaWiki Discord Authentication Extension
 
+> 🇩🇪 *Diese Dokumentation ist auch auf Deutsch verfügbar: [README.de.md](README.de.md)*
+
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X8X01TGZLU)
 
-Eine MediaWiki-Erweiterung zur Authentifizierung über Discord OAuth2 mit Server- und Rollenzugehörigkeitsprüfung.
+A MediaWiki extension providing authentication via Discord OAuth2 with server and role membership verification, automatic group synchronization, and dedicated administration tools.
 
-## Anforderungen
+## Requirements
 
 - MediaWiki 1.35+
 - PHP 8.2+
-- Discord Application mit OAuth2
+- Discord Application with OAuth2
 
 ## Installation
 
-1. Laden Sie die Erweiterung in das Verzeichnis `extensions/DiscordAuth` herunter
-2. Fügen Sie folgende Zeile zu Ihrer `LocalSettings.php` hinzu:
+1. Download or clone the extension into your `extensions/DiscordAuth` directory.
+2. Add the following line to your `LocalSettings.php`:
 
 ```php
 wfLoadExtension( 'DiscordAuth' );
 ```
 
-## Discord Application einrichten
+3. Run the MediaWiki database update script (creates the `discordauth_links` table and automatically migrates any existing links):
 
-1. Gehen Sie zu [Discord Developer Portal](https://discord.com/developers/applications)
-2. Erstellen Sie eine neue Application oder wählen Sie eine bestehende aus
-3. Navigieren Sie zu **OAuth2** → **General**
-4. Notieren Sie sich die **Client ID** und **Client Secret**
-5. Fügen Sie unter **Redirects** folgende URL hinzu:
+```bash
+php maintenance/update.php
+```
+
+> **Note:** If running `update.php` manually is not possible (e.g., in shared hosting environments without shell access), the extension will automatically attempt to create the `discordauth_links` table in the background and migrate legacy entries upon first request. However, executing `update.php` remains recommended.
+
+## Setting up Discord Application
+
+1. Open the [Discord Developer Portal](https://discord.com/developers/applications).
+2. Create a new Application (or select an existing one).
+3. Navigate to **OAuth2** → **General**.
+4. Note down your **Client ID** and **Client Secret**.
+5. Under **Redirects**, add your wiki's login callback URL:
    ```
-   https://ihr-wiki.example.com/index.php/Special:Login
+   https://your-wiki.example.com/index.php/Special:Login
    ```
-6. Unter **OAuth2** → **URL Generator** wählen Sie die Scopes:
+6. Under **OAuth2** → **URL Generator**, select the scopes:
    - `identify`
    - `guilds.members.read`
 
-## Konfiguration
+## Configuration
 
-Fügen Sie folgende Konfiguration zu Ihrer `LocalSettings.php` hinzu:
+Add the configuration settings to your `LocalSettings.php`:
 
 ```php
 // Discord OAuth2 Credentials
-$wgDiscordClientId = 'IHRE_CLIENT_ID';
-$wgDiscordClientSecret = 'IHR_CLIENT_SECRET';
+$wgDiscordClientId = 'YOUR_CLIENT_ID';
+$wgDiscordClientSecret = 'YOUR_CLIENT_SECRET';
 
 // Discord Server (Guild) ID
-$wgDiscordGuildId = 'IHRE_SERVER_ID';
+$wgDiscordGuildId = 'YOUR_SERVER_ID';
 
-// Erlaubte Rollen (Role IDs) - optional
-// Wenn leer, ist nur Server-Mitgliedschaft erforderlich
+// Allowed Discord roles (Role IDs) - optional
+// If left empty, server membership alone is sufficient
 $wgDiscordAllowedRoles = [
-    '123456789012345678',  // Beispiel Role ID
-    '987654321098765432',  // Weitere Role ID
+    '123456789012345678',  // Example Role ID
+    '987654321098765432',  // Another Role ID
 ];
 
-// Automatische Benutzererstellung aktivieren
+// Enable automatic account creation on first login
 $wgDiscordAutoCreate = true;
 
-// Authentifizierungsmodus (siehe unten für Details)
-$wgDiscordAuthMode = 'optional';  // 'optional', 'required', oder 'supplement'
+// Authentication mode ('optional', 'required', or 'supplement')
+$wgDiscordAuthMode = 'optional';
 
-// Discord Role zu MediaWiki-Gruppen Zuordnung (optional)
-// WICHTIG: Verwenden Sie das Array-of-Objects Format für Discord Snowflake IDs
+// Discord Role to MediaWiki Group mapping (optional)
+// IMPORTANT: Use the array-of-objects format for Discord snowflake IDs
 $wgDiscordRoleToGroupMapping = [
-    ['role' => '123456789012345678', 'group' => 'sysop'],                        // Eine Rolle → eine Gruppe
-    ['role' => '987654321098765432', 'group' => ['bureaucrat', 'editor']],       // Eine Rolle → mehrere Gruppen
-    ['role' => '111222333444555666', 'group' => 'autoconfirmed'],                // Weitere Rolle → eine Gruppe
+    ['role' => '123456789012345678', 'group' => 'sysop'],                        // One role → one group
+    ['role' => '987654321098765432', 'group' => ['bureaucrat', 'editor']],       // One role → multiple groups
+    ['role' => '111222333444555666', 'group' => 'autoconfirmed'],                // Another role → one group
 ];
 
-// Gruppen-Synchronisations-Modus (optional, Standard: 'always')
-$wgDiscordGroupSyncMode = 'always';  // 'always', 'once', oder 'disabled'
+// Group synchronization mode (optional, default: 'always')
+$wgDiscordGroupSyncMode = 'always';  // 'always', 'once', or 'disabled'
 ```
 
-### Authentifizierungsmodi
+### Authentication Modes
 
-Die Extension unterstützt drei verschiedene Modi:
+The extension supports three authentication modes:
 
-#### 1. **'optional'** (Standard) - Beides möglich
+#### 1. **'optional'** (Default) - Both Discord and password allowed
 ```php
 $wgDiscordAuthMode = 'optional';
 ```
-- ✅ Benutzer können sich mit Discord **oder** Passwort anmelden
-- ✅ Benutzer können Passwörter setzen/ändern
-- ✅ Bestehende Benutzer können Discord nachträglich verknüpfen
-- **Ideal für:** Bestehende Wikis, die Discord als zusätzliche Option anbieten
+- ✅ Users can log in using either Discord **or** standard password
+- ✅ Users can set or change passwords
+- ✅ Existing accounts can link their Discord profile at any time
+- **Best for:** Established wikis offering Discord as an additional convenient login method
 
-#### 2. **'required'** (Empfohlen für neue Wikis) - Nur Discord
+#### 2. **'required'** (Recommended for community wikis) - Discord only
 ```php
 $wgDiscordAuthMode = 'required';
 ```
-- ✅ **Nur Discord-Login möglich**
-- ❌ Passwort-Felder werden ausgeblendet
-- ❌ Benutzer können keine Passwörter setzen/ändern
-- ✅ Automatische Benutzererstellung bei Discord-Login
-- **Ideal für:** Neue, geschlossene Wikis nur für Discord-Community
+- ✅ **Discord login only**
+- ❌ Password fields are hidden from login forms
+- ❌ Users cannot set or change passwords
+- ✅ Automatic account creation upon Discord login
+- **Best for:** Private, closed wikis exclusive to a Discord community
 
-#### 3. **'supplement'** - Passwort erforderlich
+#### 3. **'supplement'** - Password required, Discord optional
 ```php
 $wgDiscordAuthMode = 'supplement';
 ```
-- ✅ Benutzer **müssen** ein Passwort haben
-- ✅ Discord-Login als zusätzliche Bequemlichkeit
-- ✅ Passwort als Fallback wenn Discord-Zugang verloren
-- **Ideal für:** Wikis mit höheren Sicherheitsanforderungen
+- ✅ Users **must** have a password
+- ✅ Discord login serves as an extra convenience
+- ✅ Password acts as fallback if Discord access is lost
+- **Best for:** Wikis with stricter multi-channel security policies
 
-### Discord IDs finden
+### Finding Discord IDs
 
 **Server ID (Guild ID):**
-1. Aktivieren Sie den Entwicklermodus in Discord (Benutzereinstellungen → Erweitert → Entwicklermodus)
-2. Rechtsklick auf Ihren Server → **Server-ID kopieren**
+1. Enable Developer Mode in Discord (*User Settings* → *Advanced* → *Developer Mode*).
+2. Right-click your server icon → **Copy Server ID**.
 
-**Rollen ID (Role ID):**
-1. Servereinstellungen → Rollen
-2. Rechtsklick auf eine Rolle → **Rolle-ID kopieren**
+**Role ID:**
+1. Open *Server Settings* → *Roles*.
+2. Right-click the desired role → **Copy Role ID**.
 
-## Verwendung
+## Usage
 
-### Für neue Benutzer
+### For New Users
 
-1. Gehen Sie zur Login-Seite Ihres Wikis
-2. Klicken Sie auf **"Mit Discord anmelden"**
-3. Autorisieren Sie die Application im Discord OAuth2-Fenster
-4. **Wählen Sie Ihren Benutzernamen** (der Discord-Username wird vorgeschlagen)
-5. Sie werden automatisch eingeloggt, wenn:
-   - Sie Mitglied des konfigurierten Discord-Servers sind
-   - Sie eine der erlaubten Rollen haben (falls konfiguriert)
+1. Visit your wiki's login page.
+2. Click **"Log in with Discord"**.
+3. Authorize the application in the Discord OAuth2 dialog.
+4. **Choose your wiki username** (the Discord username is suggested automatically).
+5. You are logged in automatically if:
+   - You are a member of the configured Discord server.
+   - You possess one of the allowed roles (if configured).
 
-### Für bestehende Benutzer (Discord-Konto verknüpfen)
+### For Existing Users (Linking Accounts)
 
-Bestehende Wiki-Benutzer können ihr Discord-Konto nachträglich verknüpfen:
+Existing wiki accounts can link their Discord profile afterwards:
 
-1. **Melden Sie sich normal** in Ihrem Wiki-Konto an
-2. Gehen Sie zu: `Special:LinkDiscord` oder `Spezial:Discord-Konto_verknüpfen`
-3. Klicken Sie auf **"Discord-Konto verknüpfen"**
-4. Autorisieren Sie die Application im Discord OAuth2-Fenster
-5. Ihr Discord-Konto ist nun mit Ihrem Wiki-Konto verknüpft
+1. **Log in normally** to your wiki account.
+2. Navigate to `Special:LinkDiscord`.
+3. Click **"Link Discord Account"**.
+4. Authorize the application in the Discord OAuth2 dialog.
+5. Your Discord account is now linked.
 
-Ab jetzt können Sie sich mit Discord anmelden, auch wenn Sie ursprünglich mit Passwort registriert haben.
+You can now log in via Discord at any time.
 
-**Verknüpfung aufheben:**
-- Gehen Sie zu `Special:LinkDiscord`
-- Klicken Sie auf **"Discord-Konto trennen"**
+**Unlinking:**
+- Visit `Special:LinkDiscord`.
+- Click **"Disconnect Discord Account"**.
 
-### Benutzername-Format
+### Username Format
 
-Neue Benutzer können ihren Benutzernamen frei wählen (ohne "Discord:" Präfix).
-Die Verknüpfung erfolgt über die Discord-ID, nicht über den Benutzernamen.
+New users can freely choose their wiki username (without any mandatory `Discord:` prefix). The internal connection is maintained exclusively via the unique numeric Discord ID.
 
-## Discord-Profilanzeige & Benutzerlisten
+## Discord Profile Display & User Lists
 
-Diese Erweiterung bietet verschiedene Möglichkeiten, die verknüpften Discord-Profile der Benutzer im Wiki anzuzeigen und zu verlinken.
+The extension provides several ways to showcase and link verified Discord profiles throughout the wiki.
 
-### 1. Automatischer Link in der Seitenleiste (Toolbox)
-Sobald sich ein Besucher auf der Benutzerseite eines Wiki-Nutzers (z. B. `Benutzer:Name`) befindet, der sein Konto mit Discord verknüpft hat, erscheint in der Seitenleiste (unter dem Menüpunkt **Werkzeuge** / **Toolbox**) automatisch ein direkter Link zum Discord-Profil:
-* **Format:** `[Benutzername] auf Discord`
-* **Ziel:** Führt direkt zum Discord-Nutzerprofil (`https://discord.com/users/<Discord-ID>`) in einem neuen Tab.
+### 1. Automatic Sidebar Link (Toolbox)
+When viewing the user page of a registered wiki user (`User:Name`) who has linked their Discord account, a direct profile link automatically appears in the sidebar (*Tools* / *Toolbox*):
+* **Format:** `[Username] on Discord`
+* **Target:** Opens the user's Discord profile (`https://discord.com/users/<Discord-ID>`) in a new tab.
 
-### 2. Parser-Funktionen (Wikitext)
-Du kannst Discord-Links und -IDs flexibel über Wikitext in jede beliebige Wiki-Seite oder Vorlage einbetten:
+### 2. Parser Functions (Wikitext)
+Embed Discord links and IDs anywhere in wikitext or templates:
 
-* **`{{#discordlink:Benutzername|Linktext}}`**
-  Erstellt einen formatierten externen Link zum Discord-Profil des Nutzers.
-  * *Beispiel:* `{{#discordlink:Dominik|Kontakt via Discord}}`
-  * *Standardverhalten:* Wenn der Benutzername weggelassen wird, wird versucht, ihn von der aktuellen Benutzerseite zu beziehen. Wenn kein Linktext angegeben ist, wird standardmäßig „Discord-Profil“ verwendet.
-* **`{{#discordid:Benutzername}}`**
-  Gibt die rohe numerische Discord-ID des Benutzers aus (hilfreich für Vorlagen oder eigene Abfragen).
-  * *Beispiel:* `{{#discordid:Dominik}}`
+* **`{{#discordlink:Username|LinkText}}`**
+  Renders a formatted external link to the user's Discord profile.
+  * *Example:* `{{#discordlink:Dominik|Contact via Discord}}`
+  * *Default behavior:* If the username is omitted, it defaults to the current user page. If link text is omitted, it defaults to "Discord-Profil".
+* **`{{#discordid:Username}}`**
+  Outputs the raw numeric Discord ID of the user.
+  * *Example:* `{{#discordid:Dominik}}`
 
-### 3. Benutzerlisten / Kacheln (`<userlist>`)
-Mit dem Tag `<userlist>` kannst du ansprechende Benutzerlisten darstellen (Standard: Kachel-Design, optional: kompaktes Listen-Design). Die Extension bindet bei verknüpften Benutzern automatisch einen Discord-Button ein:
+### 3. User Lists & Grids (`<userlist>`)
+The `<userlist>` tag renders customizable user lists (card grid layout by default, or compact horizontal list):
 
-* **Benutzer einer Gruppe anzeigen (Standard Kachel-Grid):**
+* **Display users of a specific group (card grid):**
   ```html
   <userlist group="sysop" show="name,mail" displayname="real" />
   ```
-* **Bestimmte Benutzer anzeigen:**
+* **Display specific users:**
   ```html
-  <userlist users="Benutzer1,Benutzer2" show="name,mail,tätigkeit" displayname="both" />
+  <userlist users="User1,User2" show="name,mail,role" displayname="both" />
   ```
-* **Kompakte, horizontale Listendarstellung (3 Spalten: Bild, Infos, Aktionen):**
+* **Compact list view:**
   ```html
-  <userlist group="sysop" show="tätigkeit" layout="list" />
+  <userlist group="sysop" show="role" layout="list" />
   ```
-* **Alle registrierten Benutzer anzeigen (ohne Gruppen-Filter):**
+* **Display all registered users:**
   ```html
   <userlist />
-  <!-- Alternativ: -->
+  <!-- Or explicitly: -->
   <userlist group="*" />
   ```
-* **Benutzer anzeigen, aber bestimmte Accounts ausschließen:**
+* **Exclude specific accounts:**
   ```html
   <userlist group="sysop" exclude="AdminBot,TestUser" />
   ```
 
-#### Attribute:
-* **`group`**: Der Name der MediaWiki-Benutzergruppe (z. B. `sysop`, `bureaucrat`, `bot`). Wird `*`, `all` oder das Attribut komplett weggelassen (und auch `users` fehlt), werden alle registrierten Benutzer des Wikis angezeigt.
-* **`users`**: Eine kommagetrennte Liste von Wiki-Benutzernamen (wird ignoriert, wenn `group` angegeben ist). Kann auch `*` sein, um alle Benutzer anzuzeigen.
-* **`exclude`**: Eine kommagetrennte Liste von Wiki-Benutzernamen, die aus der Anzeige ausgeschlossen werden sollen (hilfreich bei Gruppen- oder Gesamtlisten).
-* **`show`**: Welche Felder aus der `{{Benutzerinfobox}}` des Nutzers angezeigt werden sollen. Bei `layout="list"` werden diese Felder in kleinerer Schrift unter dem Namen dargestellt.
-* **`displayname`**: (Nur für `layout="card"` relevant) Wie der Name gerendert wird:
-  * `real` (Standard): Zeigt den echten Namen aus der Infobox (falls vorhanden) oder den Wiki-Namen als Fallback.
-  * `wiki`: Zeigt nur den Wiki-Benutzernamen.
-  * `both`: Zeigt den echten Namen und in Klammern darunter den Wiki-Namen.
-* **`layout`**: Das Layout der Liste. Entweder `card` (Standard, Kachel-Grid) oder `list` (horizontale, kompakte Zeilen; wird auf Desktop-Bildschirmen zweispaltig mit 12px Abstand dargestellt).
-* **`fallbackimage`**: Standard-Dateiname für Benutzer ohne Avatar-Bild in ihrer Infobox (Standard: `Person.jpg`).
+#### Attributes:
+* **`group`**: The MediaWiki user group (e.g. `sysop`, `bureaucrat`). If omitted or set to `*` / `all`, all registered users are shown.
+* **`users`**: A comma-separated list of usernames (ignored if `group` is specified).
+* **`exclude`**: Comma-separated list of usernames to exclude from the output.
+* **`show`**: Fields to display from the user's infobox template.
+* **`displayname`**: How the name is formatted (`real`, `wiki`, or `both`).
+* **`layout`**: Layout style: `card` (default grid) or `list` (horizontal compact rows).
+* **`fallbackimage`**: Default avatar image filename if none is present (default: `Person.jpg`).
 
-## Automatische Gruppen-Synchronisation
+## Automatic Group Synchronization
 
-### Discord Rollen → MediaWiki Gruppen
+### Discord Roles → MediaWiki Groups
 
-Die Extension kann automatisch MediaWiki-Benutzergruppen basierend auf Discord-Rollen zuweisen.
+The extension automatically maps and synchronizes MediaWiki user groups based on Discord roles.
 
-### Konfiguration
+### Configuration
 
 ```php
-// Discord Role zu MediaWiki-Gruppen Zuordnung
-// WICHTIG: Discord Snowflake IDs sind sehr große Zahlen (18-19 Stellen).
-// PHP/MediaWiki verliert diese IDs bei Verwendung als Array-Keys.
-// Verwenden Sie daher das Array-of-Objects Format:
+// Discord Role to MediaWiki Group mapping
+// IMPORTANT: Discord snowflake IDs are 64-bit integers (18-19 digits).
+// Use the array-of-objects structure to avoid integer key truncation in PHP:
 $wgDiscordRoleToGroupMapping = [
-    ['role' => 'DISCORD_ROLE_ID', 'group' => 'mediawiki_group_name'],           // Eine Rolle → eine Gruppe
-    ['role' => 'DISCORD_ROLE_ID', 'group' => ['group1', 'group2']],             // Eine Rolle → mehrere Gruppen
+    ['role' => 'DISCORD_ROLE_ID', 'group' => 'mediawiki_group_name'],           // One role → one group
+    ['role' => 'DISCORD_ROLE_ID', 'group' => ['group1', 'group2']],             // One role → multiple groups
 
     ['role' => '123456789012345678', 'group' => 'sysop'],                       // Discord Admins → Wiki Admins
-    ['role' => '987654321098765432', 'group' => ['bureaucrat', 'editor']],      // Discord Mods → Mehrere Gruppen
+    ['role' => '987654321098765432', 'group' => ['bureaucrat', 'editor']],      // Discord Mods → Multiple groups
 ];
 
-// Gruppen-Synchronisations-Modus
-$wgDiscordGroupSyncMode = 'always';  // 'always', 'once', oder 'disabled'
+// Synchronization mode
+$wgDiscordGroupSyncMode = 'always';  // 'always', 'once', or 'disabled'
 ```
 
-**Discord Role ID finden:**
-1. Discord Entwicklermodus aktivieren (Benutzereinstellungen → Erweitert)
-2. Servereinstellungen → Rollen
-3. Rechtsklick auf Rolle → **Rolle-ID kopieren**
+### Sync Modes
 
-### Synchronisations-Modi
-
-#### 1. **'always'** (Standard) - Kontinuierliche Synchronisation
+#### 1. **'always'** (Default) - Continuous Synchronization
 ```php
 $wgDiscordGroupSyncMode = 'always';
 ```
-- ✅ **Bei Registrierung:** Gruppen werden automatisch zugewiesen
-- ✅ **Bei jedem Login:** Gruppen werden automatisch synchronisiert
-- ✅ **Beim Verknüpfen:** Gruppen werden beim Verknüpfen eines Discord-Kontos synchronisiert
-- ✅ **Bidirektional:** Fehlende Gruppen werden hinzugefügt, überflüssige entfernt
-- ✅ **Nur gemappte Gruppen:** Andere Gruppen bleiben unberührt
-- **Ideal für:** Wikis wo Berechtigungen zentral über Discord verwaltet werden sollen
+- ✅ **On registration:** Groups are assigned automatically.
+- ✅ **On every login:** Groups are synchronized with current Discord roles.
+- ✅ **On account linking:** Groups sync when a user links their Discord account.
+- ✅ **Bidirectional:** Adds newly qualified groups and removes revoked mapped groups.
+- ✅ **Safe:** Unmapped groups (e.g. manually granted) remain untouched.
 
-#### 2. **'once'** - Einmalige Synchronisation
+#### 2. **'once'** - Initial Synchronization Only
 ```php
 $wgDiscordGroupSyncMode = 'once';
 ```
-- ✅ **Bei Registrierung:** Gruppen werden automatisch zugewiesen
-- ✅ **Beim Verknüpfen:** Gruppen werden beim ersten Verknüpfen synchronisiert
-- ❌ **Bei Logins:** Keine Synchronisation bei späteren Logins
-- **Manuelle Verwaltung:** Gruppen können danach im Wiki manuell angepasst werden
-- **Ideal für:** Wikis wo Discord nur für die initiale Rechtevergabe genutzt wird
+- ✅ Groups are synchronized only upon registration or initial account link.
+- ❌ No synchronization on subsequent logins.
+- Allows administrators to manage all rights inside the wiki manually afterwards.
 
-#### 3. **'disabled'** - Keine automatische Synchronisation
+#### 3. **'disabled'** - No Automatic Sync
 ```php
 $wgDiscordGroupSyncMode = 'disabled';
 ```
-- ❌ **Keine automatische Synchronisation**
-- **Manuelle Verwaltung:** Alle Gruppen müssen über `Special:UserRights` verwaltet werden
-- **Ideal für:** Wikis die Discord nur zur Authentifizierung nutzen
+- ❌ All group assignments must be managed manually via `Special:UserRights`.
 
-### Beispiel-Szenarien (mit 'always' Modus)
+## Security & Architecture
 
-#### Szenario 1: Neue Registrierung
-```
-Discord-Nutzer hat Rollen: [Admin, VIP]
-Konfiguration: ['role' => '123...456', 'group' => 'sysop']
+- **State Parameter:** Strict CSRF mitigation on OAuth2 authorization redirects.
+- **No Stored Tokens:** Discord access tokens are exchanged server-side and never persisted in database records.
+- **Dedicated Table:** Discord account associations are stored in the dedicated `discordauth_links` database table, completely decoupled from `user_properties` to guarantee links are never deleted by user preference updates or resets.
 
-Ergebnis: Wiki-Account wird mit Gruppe 'sysop' erstellt
-```
+## What Happens When Membership Is Lost?
 
-#### Szenario 2: Bestehender Nutzer verliert Discord-Rolle
-```
-Vor Login: Wiki-Gruppen: [sysop, bureaucrat]
-Discord-Rollen: [VIP] (Admin-Rolle verloren)
-Nach Login: Wiki-Gruppen: [bureaucrat]
+### Behavior by Authentication Mode:
 
-→ 'sysop' wurde automatisch entfernt
-```
+#### With `$wgDiscordAuthMode = 'optional'` (Default):
+1. **Discord Login:** ❌ Blocked (error: *"You are not a member of the required Discord server"*).
+2. **Password Login:** ✅ Continues to work.
 
-#### Szenario 3: Nutzer erhält neue Discord-Rolle
-```
-Vor Login: Wiki-Gruppen: [editor]
-Discord-Rollen: [Editor, Moderator] (neu)
-Konfiguration: ['role' => '789...012', 'group' => 'bureaucrat']
-Nach Login: Wiki-Gruppen: [editor, bureaucrat]
+#### With `$wgDiscordAuthMode = 'required'` (Discord-Only):
+1. **Discord Login:** ❌ Blocked.
+2. **Password Login:** ❌ Disabled.
+* **Result:** The user is completely locked out. Role and membership checks occur live on every Discord login without cache delays.
 
-→ 'bureaucrat' wurde automatisch hinzugefügt
-```
+#### With `$wgDiscordAuthMode = 'supplement'`:
+1. **Discord Login:** ❌ Blocked.
+2. **Password Login:** ✅ Functions as fallback.
 
-#### Szenario 4: Eine Rolle → Mehrere Gruppen
-```
-Discord-Nutzer hat Rolle: [Admin]
-Konfiguration: ['role' => '123...456', 'group' => ['sysop', 'bureaucrat', 'interface-admin']]
+### Summary
 
-Ergebnis: Benutzer erhält alle drei Gruppen automatisch
-```
+| Mode | Discord Login | Password Login | Wiki Access Lost? |
+|------|---------------|----------------|-------------------|
+| `optional` | ❌ | ✅ | **No** |
+| `required` | ❌ | ❌ | **Yes** ✅ |
+| `supplement` | ❌ | ✅ | **No** |
 
-### Admin-Übersicht: Gruppen-Synchronisation
+## Administration Tools
 
-**Special:DiscordMembershipCheck** zeigt für jeden Benutzer:
+The extension provides administrators (users with the `block` permission or sysop status) dedicated management tools:
 
-✅ **Synchronisiert:**
-```
-Gruppen: ✓ sysop, bureaucrat
-```
+### 1. Manual Account Linking (`Special:LinkDiscord`)
+Administrators can manually link or unlink accounts at the bottom of `Special:LinkDiscord`:
+* **Assign Discord ID:** Assigns a Discord ID to any registered wiki user. Snowflake format (15–22 digits) is strictly validated. A Discord ID cannot be accidentally linked to multiple accounts.
+* **Remove Link:** Leaving the Discord ID blank requires checking an explicit confirmation checkbox to prevent accidental unlinking.
 
-⚠️ **Nicht synchronisiert:**
-```
-Gruppen: ⚠️ Gruppen-Konflikt
-Erwartet: sysop, bureaucrat
-Aktuell: editor, sysop
-→ [Benutzerrechte verwalten]
-```
+### 2. User Merge & Deletion (`Special:DiscordUserMerge`)
+Allows administrators to merge or clean up user accounts:
+* **Merge Accounts (Source & Target specified):**
+  * All revisions, uploads, and log entries from the **source user** are reattributed to the **target user**.
+  * The source user account and its Discord link are permanently removed.
+  * The user page is redirected to the target user.
+* **Pure Deletion (Source only):**
+  * Revisions are anonymized and assigned to *"Gelöschter Benutzer"* (ID 0).
+  * The account and its Discord link are removed from the database.
 
-**Link "Benutzerrechte verwalten":**
-- Führt direkt zu `Special:UserRights` für den Benutzer
-- Ermöglicht manuelle Anpassung der Gruppenzuordnung
+### 3. Membership & Role Audit (`Special:DiscordMembershipCheck`)
+Audits all users with linked Discord accounts against the live Discord API:
+* **Live status verification:** Checks server membership and configured roles in real time.
+* **Group discrepancy warning:** Flags any mismatch between expected mapped groups and actual wiki groups.
+* **One-click block action:** Quickly blocks accounts that left the Discord community.
 
-### Wichtige Hinweise
-
-⚠️ **Sicherheit:**
-- Die Extension synchronisiert **nur gemappte Gruppen**
-- Andere Gruppen (z.B. manuell vergebene) bleiben unberührt
-- Admins können Gruppen weiterhin manuell über `Special:UserRights` verwalten
-
-⚠️ **Performance:**
-- Synchronisation erfolgt bei jedem Discord-Login (nur bei `'always'` Modus)
-- Keine Hintergrund-Jobs erforderlich
-- Live-Abfrage der Discord-Rollen via API
-
-💡 **Empfehlung:**
-- Verwenden Sie `'always'` wenn Discord die zentrale Berechtigungsquelle ist
-- Verwenden Sie `'once'` wenn Sie nur initiale Gruppen zuweisen möchten
-- Verwenden Sie `'disabled'` wenn Sie volle manuelle Kontrolle benötigen
-
-💡 **Best Practice:**
-```php
-// Empfohlene Struktur:
-$wgDiscordRoleToGroupMapping = [
-    // Kritische Berechtigungen
-    ['role' => 'ADMIN_ROLE_ID', 'group' => 'sysop'],
-    ['role' => 'MOD_ROLE_ID', 'group' => 'bureaucrat'],
-
-    // Spezielle Gruppen
-    ['role' => 'EDITOR_ROLE_ID', 'group' => 'editor'],
-    ['role' => 'TRUSTED_ROLE_ID', 'group' => 'autoconfirmed'],
-];
-
-// Hinweis: Gruppen müssen in MediaWiki existieren
-// Custom Groups können über Extensions oder $wgGroupPermissions definiert werden
-```
-
-## Sicherheit
-
-- Die Erweiterung verwendet State-Parameter für CSRF-Schutz
-- Access Tokens werden nicht gespeichert
-- OAuth2 Code Exchange erfolgt serverseitig
-
-## Was passiert bei Verlust der Mitgliedschaft?
-
-### Benutzer verlässt Discord-Server oder verliert Rolle
-
-**Szenario:** Ein Benutzer ist im Wiki registriert, verlässt aber den Discord-Server oder verliert die erforderliche Rolle.
-
-### Verhalten nach Authentifizierungsmodus:
-
-#### Mit `$wgDiscordAuthMode = 'optional'` (Standard):
-
-1. **Discord-Login:** ❌ Blockiert
-   - Fehlermeldung: "Sie sind kein Mitglied des erforderlichen Discord-Servers"
-
-2. **Passwort-Login:** ✅ Funktioniert weiterhin
-   - Der Benutzer kann sich mit Benutzername/Passwort anmelden
-   - Zugriff bleibt erhalten
-
-**Geeignet für:** Wikis wo ehemalige Mitglieder Zugriff behalten sollen
-
----
-
-#### Mit `$wgDiscordAuthMode = 'required'` (Discord-only):
-
-1. **Discord-Login:** ❌ Blockiert
-   - Fehlermeldung: "Sie sind kein Mitglied des erforderlichen Discord-Servers"
-
-2. **Passwort-Login:** ❌ Nicht verfügbar
-   - Benutzer können keine Passwörter setzen/ändern
-
-**Ergebnis:** ⚠️ **Benutzer ist komplett ausgesperrt**
-
-**Geeignet für:** Private Discord-Community-Wikis mit strenger Zugangskontrolle
-
-**Wichtig:**
-- ✅ Die Mitgliedschaftsprüfung erfolgt **bei jedem Discord-Login** live
-- ✅ Keine zeitliche Verzögerung - sofortiger Effekt
-- ⚠️ Admins sollten regelmäßig inaktive Accounts prüfen/löschen
-
----
-
-#### Mit `$wgDiscordAuthMode = 'supplement'`:
-
-1. **Discord-Login:** ❌ Blockiert
-2. **Passwort-Login:** ✅ Funktioniert (Fallback)
-
-**Geeignet für:** Wikis mit höheren Sicherheitsanforderungen
-
-### Zusammenfassung
-
-| Modus | Discord-Login | Passwort-Login | Zugriff verloren? |
-|-------|---------------|----------------|-------------------|
-| `optional` | ❌ | ✅ | **Nein** |
-| `required` | ❌ | ❌ | **Ja** ✅ |
-| `supplement` | ❌ | ✅ | **Nein** |
-
-### Empfehlung für 'required' Modus:
-
-Wenn Sie `required` verwenden, sollten Sie:
-1. ✅ Benutzer vorab informieren über die Zugangsrichtlinien
-2. ✅ Klare Regeln für Server-Mitgliedschaft kommunizieren
-3. ⚠️ Admin-Account mit Maintenance-Script-Zugang behalten für Notfälle
-4. ✅ **Admin-Tool verwenden:** `Special:DiscordMembershipCheck` (siehe unten)
-
-## Admin-Tool: Mitgliedschaftsprüfung
-
-### Special:DiscordMembershipCheck
-
-Die Extension bietet eine Admin-SpecialPage zur Überprüfung aller Benutzer mit Discord-Verknüpfung.
-
-**Features:**
-- ✅ **Live-Prüfung** aller Benutzer mit Discord-Konto
-- ✅ **Übersichtliche Statistiken** (Gültig / Ungültig / Gesperrt)
-- ✅ **Sortierbare Tabellen** nach Status
-- ✅ **Ein-Klick-Sperrung** für Benutzer ohne Zugang
-- ✅ **Automatische Sperrgrund-Dokumentation**
-
-**Zugriff:** Nur für Benutzer mit `block`-Berechtigung (i.d.R. Administratoren)
-
-### Setup:
-
-1. **Discord Bot erstellen:**
-   - Gehen Sie zu https://discord.com/developers/applications
-   - Erstellen Sie eine neue Application (oder nutzen Sie die bestehende)
-   - Gehen Sie zu **Bot** → **Add Bot**
-   - Aktivieren Sie unter **Privileged Gateway Intents**: **SERVER MEMBERS INTENT** ⚠️ Wichtig!
-   - Kopieren Sie den Bot-Token
-
-2. **Bot zum Server hinzufügen:**
-   - Gehen Sie zu **OAuth2** → **URL Generator**
-   - Wählen Sie Scope: `bot`
-   - Wählen Sie Permissions: **Read Messages/View Channels**
-   - Öffnen Sie die generierte URL und fügen Sie den Bot zu Ihrem Server hinzu
-
-3. **Token konfigurieren:**
+**Setup Bot Token:**
+1. Create a Bot in the [Discord Developer Portal](https://discord.com/developers/applications) and enable **SERVER MEMBERS INTENT** under *Privileged Gateway Intents*.
+2. Add the bot to your server.
+3. Configure the token in `LocalSettings.php`:
    ```php
-   $wgDiscordBotToken = 'IHR_BOT_TOKEN_HIER';
+   $wgDiscordBotToken = 'YOUR_BOT_TOKEN_HERE';
    ```
 
-4. **Tool nutzen:**
-   - Gehen Sie zu `Special:DiscordMembershipCheck`
-   - Klicken Sie auf "Benutzer sperren" für invalide Benutzer
+### 4. Database Storage & Migration
+Account connections are stored in the dedicated table `discordauth_links`:
+* **Protection against data loss:** Completely independent of MediaWiki's user options (`user_properties`). Saving or resetting preferences on `Special:Preferences` cannot touch Discord links.
+* **Automatic Migration:** The included maintenance script `Maintenance/MigrateDiscordLinks.php` runs automatically via `update.php` to migrate legacy entries.
 
-### Beispiel-Screenshot (Funktion):
+## Configuration Options Summary
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ Discord-Mitgliedschaftsüberprüfung                      │
-├─────────────────────────────────────────────────────────┤
-│ Statistiken:                                            │
-│  [12]  [10]   [2]   [0]                                │
-│  Gesamt Gültig Ungültig Gesperrt                       │
-├─────────────────────────────────────────────────────────┤
-│ ⚠️  Benutzer ohne gültigen Zugang:                     │
-│ ┌──────────┬───────────┬────────────┬─────────────┐   │
-│ │ Wiki     │ Discord   │ Discord ID │ Aktion      │   │
-│ ├──────────┼───────────┼────────────┼─────────────┤   │
-│ │ MaxMust  │ max#1234  │ 123456789  │ [Sperren]   │   │
-│ │ AltUser  │ old#5678  │ 987654321  │ [Sperren]   │   │
-│ └──────────┴───────────┴────────────┴─────────────┘   │
-└─────────────────────────────────────────────────────────┘
-```
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `$wgDiscordClientId` | string | `''` | Discord Application Client ID (required) |
+| `$wgDiscordClientSecret` | string | `''` | Discord Application Client Secret (required) |
+| `$wgDiscordGuildId` | string | `''` | Discord Server (Guild) ID (required) |
+| `$wgDiscordAllowedRoles` | array | `[]` | Array of allowed Role IDs (optional, empty = server membership only) |
+| `$wgDiscordAutoCreate` | bool | `false` | Automatically create accounts upon first Discord login |
+| `$wgDiscordAuthMode` | string | `'optional'` | Auth mode: `'optional'`, `'required'`, or `'supplement'` |
+| `$wgDiscordBotToken` | string | `''` | Discord Bot Token (optional, needed for `Special:DiscordMembershipCheck`) |
+| `$wgDiscordRoleToGroupMapping` | array | `[]` | Mapping of Discord Role IDs to MediaWiki groups |
+| `$wgDiscordGroupSyncMode` | string | `'always'` | Group sync mode: `'always'`, `'once'`, or `'disabled'` |
+| `$wgDiscordSessionTimeout` | int | `604800` | Session timeout in seconds for Discord-authenticated users (1 week) |
 
-## Fehlermeldungen
+## Development
 
-Die Extension verwendet folgende i18n-Schlüssel für Fehlermeldungen:
-
-- `discordauth-error-invalid-state` - Ungültiger State-Parameter
-- `discordauth-error-token` - Token-Exchange fehlgeschlagen
-- `discordauth-error-userinfo` - Benutzerinformationen konnten nicht abgerufen werden
-- `discordauth-error-not-member` - Benutzer ist kein Mitglied des Servers
-- `discordauth-error-no-role` - Benutzer hat keine der erforderlichen Rollen
-- `discordauth-error-no-account` - Kein Wiki-Account vorhanden und AutoCreate deaktiviert
-
-## Konfigurationsoptionen
-
-| Option | Typ | Standard | Beschreibung |
-|--------|-----|----------|--------------|
-| `$wgDiscordClientId` | string | - | Discord Application Client ID (erforderlich) |
-| `$wgDiscordClientSecret` | string | - | Discord Application Client Secret (erforderlich) |
-| `$wgDiscordGuildId` | string | - | Discord Server ID (erforderlich) |
-| `$wgDiscordAllowedRoles` | array | `[]` | Array von erlaubten Role IDs (optional, leer = nur Server-Mitgliedschaft) |
-| `$wgDiscordAutoCreate` | bool | `false` | Automatische Benutzererstellung bei Discord-Login |
-| `$wgDiscordAuthMode` | string | `'optional'` | Authentifizierungsmodus: `'optional'`, `'required'`, oder `'supplement'` |
-| `$wgDiscordBotToken` | string | `''` | Discord Bot Token für Admin-Tools (optional, nur für Special:DiscordMembershipCheck) |
-| `$wgDiscordRoleToGroupMapping` | array | `[]` | Zuordnung Discord Role ID → MediaWiki Gruppe (optional) |
-| `$wgDiscordGroupSyncMode` | string | `'always'` | Gruppen-Synchronisations-Modus: `'always'` (bei jedem Login), `'once'` (nur bei Registrierung), `'disabled'` (keine Synchronisation) |
-
-## Admin-Tools (Benutzer zusammenführen & löschen)
-
-Die Erweiterung bietet Administratoren ein integriertes Tool zur Bereinigung von Benutzerkonten (z. B. bei durch Bugs doppelt erstellten Konten).
-
-### Spezialseite `Special:DiscordUserMerge`
-
-Administratoren (Benutzer mit dem Recht `block` bzw. Admin-Status) können über die Spezialseite `Spezial:DiscordUserMerge` zwei Aktionen durchführen:
-
-1. **Zusammenführen von Konten (Quell- und Ziel-Benutzer angegeben):**
-   * Alle Bearbeitungen, Dateiuploads, Logbucheinträge und archivierten Versionen des **Quell-Benutzers** werden auf den **Ziel-Benutzer** umgeschrieben.
-   * Der **Quell-Benutzer** wird vollständig aus der Datenbank gelöscht (inkl. Verknüpfungen und Gruppen).
-   * Die Benutzerseite des Quell-Benutzers (z. B. `Benutzer:Quellname`) wird automatisch auf die Benutzerseite des Ziel-Benutzers (z. B. `Benutzer:Zielname`) weitergeleitet.
-
-2. **Reines Löschen eines Kontos (nur Quell-Benutzer angegeben):**
-   * Alle Bearbeitungen des Quell-Benutzers werden anonymisiert auf das Pseudonym **„Gelöschter Benutzer“** (ohne Datenbank-Konto-Verbindung, ID 0) umgeschrieben.
-   * Die Benutzerseite des Quell-Benutzers wird mit dem Löschgrund *„Benutzer entfernt“* gelöscht.
-   * Der Quell-Benutzer wird vollständig aus der Datenbank gelöscht.
-
-## Entwicklung
-
-### Dateistruktur
+### Directory Structure
 
 ```
 extensions/DiscordAuth/
-├── DiscordAuthenticationRequest.php
-├── DiscordPrimaryAuthenticationProvider.php
-├── extension.json
-├── ConfigAndHttpRequestFactories.json
-├── DiscordAuthConfig.json
-├── DiscordAuthConfigSchema.json
-├── DiscordAuthenticationErrors.json
-├── DiscordAuthenticationMessages.json
-├── DiscordConfigurationSettings.json
-└── README.md
+├── DiscordLinkStore.php                      # Storage layer managing discordauth_links
+├── DiscordPrimaryAuthenticationProvider.php  # MediaWiki Primary Authentication Provider
+├── DiscordAuthenticationRequest.php          # AuthManager authentication request class
+├── Hooks.php                                 # MediaWiki hook subscribers
+├── MembershipChecker.php                     # Role and membership verification logic
+├── UserList.php                              # <userlist> tag and parser function renderers
+├── SpecialDiscordLogin.php                   # OAuth callback, login & user onboarding
+├── SpecialLinkDiscord.php                    # Account linking/unlinking (incl. admin panel)
+├── SpecialDiscordMembershipCheck.php         # Real-time bot membership & role audit
+├── SpecialDiscordUserMerge.php               # Account merging & deletion tool
+├── SpecialDiscordDebug.php                   # Configuration and role mapping diagnostics
+├── Maintenance/
+│   └── MigrateDiscordLinks.php               # Maintenance script migrating legacy properties
+├── sql/
+│   ├── mysql/discordauth_links.sql           # Schema definition for MySQL / MariaDB
+│   ├── sqlite/discordauth_links.sql          # Schema definition for SQLite
+│   └── postgres/discordauth_links.sql        # Schema definition for PostgreSQL
+├── i18n/
+│   ├── de.json, en.json, be.json, es.json, fr.json, it.json, pl.json, pt.json, ru.json, qqq.json
+├── extension.json                            # MediaWiki extension manifest
+├── README.md                                 # English documentation
+└── README.de.md                              # German documentation
 ```
 
-### PHP 8.2 Kompatibilität
+### PHP 8.2 Compatibility
 
-Die Extension ist vollständig kompatibel mit PHP 8.2 und nutzt:
-- Strikte Return-Types
-- Nullable Return-Types (`?array`)
-- Parameter Type Declarations
+The extension is fully compatible with PHP 8.2+ and adheres to strict typing, nullable return types (`?array`, `?string`), and parameter declarations.
 
 ## Troubleshooting
 
-**Problem: Login-Schleife**
-- Überprüfen Sie, ob die Redirect URI in Discord korrekt konfiguriert ist
-- Stellen Sie sicher, dass `$wgServer` in LocalSettings.php korrekt gesetzt ist
-
-**Problem: "Not a member" Fehler**
-- Überprüfen Sie die Guild ID
-- Stellen Sie sicher, dass der Bot die richtigen Permissions hat
-- Verifizieren Sie, dass der Benutzer tatsächlich Mitglied ist
-
-**Problem: "No role" Fehler**
-- Überprüfen Sie die Role IDs
-- Testen Sie mit leerem `$wgDiscordAllowedRoles` Array
-- Verifizieren Sie die Rollenzuweisungen im Discord-Server
+* **Login redirect loop:** Verify that the Redirect URI in the Discord Developer Portal matches `$wgServer` exactly.
+* **"Not a member" error:** Ensure `$wgDiscordGuildId` is correct and that the user has joined the server.
+* **"No role" error:** Verify role IDs in `$wgDiscordAllowedRoles`. Test with an empty array to isolate role-specific issues.
+* **Bot check fails:** Confirm that **SERVER MEMBERS INTENT** is activated in the Discord Developer Portal for your bot.
 
 ## Support
 
-Bei Problemen oder Fragen öffnen Sie bitte ein Issue im Repository.
+For questions, issues, or contributions, please open an issue in the GitHub repository.

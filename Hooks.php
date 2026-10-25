@@ -9,6 +9,26 @@ use MediaWiki\User\UserIdentity;
 class Hooks {
 
 	/**
+	 * Create the discordauth_links table and migrate legacy links (run via update.php)
+	 *
+	 * @param \MediaWiki\Installer\DatabaseUpdater $updater
+	 */
+	public static function onLoadExtensionSchemaUpdates( $updater ) {
+		$dbType = $updater->getDB()->getType();
+		$supported = [ 'mysql', 'sqlite', 'postgres' ];
+		if ( !in_array( $dbType, $supported, true ) ) {
+			throw new \RuntimeException( "DiscordAuth: unsupported database type '$dbType'" );
+		}
+
+		$updater->addExtensionTable(
+			DiscordLinkStore::TABLE,
+			__DIR__ . "/sql/$dbType/discordauth_links.sql"
+		);
+		$updater->addPostDatabaseUpdateMaintenance( \DiscordAuth\Maintenance\MigrateDiscordLinks::class );
+		return true;
+	}
+
+	/**
 	 * Add Discord login button to login form
 	 */
 	public static function onAuthChangeFormFields( $requests, $fieldInfo, &$formDescriptor, $action ) {
@@ -122,10 +142,9 @@ class Hooks {
 		}
 
 		// Show Discord account info if linked
-		$services = \MediaWiki\MediaWikiServices::getInstance();
-		$userOptionsLookup = $services->getUserOptionsLookup();
-		$discordId = $userOptionsLookup->getOption( $user, 'discord_id' );
-		$discordUsername = $userOptionsLookup->getOption( $user, 'discord_username' );
+		$linkStore = DiscordLinkStore::getInstance();
+		$discordId = $linkStore->getDiscordId( $user );
+		$discordUsername = $linkStore->getDiscordUsername( $user );
 
 		if ( $discordId ) {
 			$linkDiscordUrl = \SpecialPage::getTitleFor( 'LinkDiscord' )->getFullURL();
@@ -165,9 +184,7 @@ class Hooks {
 		$timeout = $wgDiscordSessionTimeout ?? 604800;
 
 		// Only enforce timeout if user has Discord linked
-		$services = \MediaWiki\MediaWikiServices::getInstance();
-		$userOptionsLookup = $services->getUserOptionsLookup();
-		$discordId = $userOptionsLookup->getOption( $user, 'discord_id' );
+		$discordId = DiscordLinkStore::getInstance()->getDiscordId( $user );
 
 		if ( $discordId ) {
 			$session = \MediaWiki\Session\SessionManager::singleton()->getSessionForRequest(
@@ -232,8 +249,7 @@ class Hooks {
 			return '';
 		}
 
-		$userOptionsLookup = $services->getUserOptionsLookup();
-		$discordId = $userOptionsLookup->getOption( $user, 'discord_id' );
+		$discordId = DiscordLinkStore::getInstance()->getDiscordId( $user );
 
 		if ( !$discordId ) {
 			return '';
@@ -269,8 +285,7 @@ class Hooks {
 			return '';
 		}
 
-		$userOptionsLookup = $services->getUserOptionsLookup();
-		$discordId = $userOptionsLookup->getOption( $user, 'discord_id' );
+		$discordId = DiscordLinkStore::getInstance()->getDiscordId( $user );
 
 		return $discordId ?: '';
 	}
@@ -287,8 +302,7 @@ class Hooks {
 			$user = $userFactory->newFromName( $username );
 
 			if ( $user && $user->isRegistered() ) {
-				$userOptionsLookup = $services->getUserOptionsLookup();
-				$discordId = $userOptionsLookup->getOption( $user, 'discord_id' );
+				$discordId = DiscordLinkStore::getInstance()->getDiscordId( $user );
 
 				if ( $discordId ) {
 					$sidebar['toolbox']['t-discordprofile'] = [

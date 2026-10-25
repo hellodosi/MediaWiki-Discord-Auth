@@ -176,6 +176,7 @@ class SpecialDiscordUserMerge extends SpecialPage {
 			$dbw->delete( 'user', [ 'user_id' => $sourceUserId ], __METHOD__ );
 			$dbw->delete( 'user_groups', [ 'ug_user' => $sourceUserId ], __METHOD__ );
 			$dbw->delete( 'user_properties', [ 'up_user' => $sourceUserId ], __METHOD__ );
+			$dbw->delete( DiscordLinkStore::TABLE, [ 'dal_user' => $sourceUserId ], __METHOD__ );
 
 			// Delete source actor row
 			if ( $sourceActorId ) {

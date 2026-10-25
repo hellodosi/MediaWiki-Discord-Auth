@@ -5,7 +5,6 @@ namespace DiscordAuth;
 use MediaWiki\SpecialPage\SpecialPage;
 use MediaWiki\Config\Config;
 use MediaWiki\Http\HttpRequestFactory;
-use MediaWiki\User\UserOptionsLookup;
 use MediaWiki\User\UserGroupManager;
 use Wikimedia\Rdbms\IConnectionProvider;
 
@@ -17,8 +16,8 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 	/** @var HttpRequestFactory */
 	private $httpRequestFactory;
 
-	/** @var UserOptionsLookup */
-	private $userOptionsLookup;
+	/** @var DiscordLinkStore */
+	private $linkStore;
 
 	/** @var IConnectionProvider */
 	private $dbProvider;
@@ -29,14 +28,13 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 	public function __construct(
 		Config $config,
 		HttpRequestFactory $httpRequestFactory,
-		UserOptionsLookup $userOptionsLookup,
 		IConnectionProvider $dbProvider,
 		UserGroupManager $userGroupManager
 	) {
 		parent::__construct( 'DiscordMembershipCheck', 'block' ); // Requires 'block' permission
 		$this->config = $config;
 		$this->httpRequestFactory = $httpRequestFactory;
-		$this->userOptionsLookup = $userOptionsLookup;
+		$this->linkStore = DiscordLinkStore::getInstance();
 		$this->dbProvider = $dbProvider;
 		$this->userGroupManager = $userGroupManager;
 	}
@@ -118,12 +116,8 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 			return;
 		}
 
-		$discordId = $this->dbProvider->getReplicaDatabase()->selectField(
-			'user_properties',
-			'up_value',
-			[ 'up_user' => $userId, 'up_property' => 'discord_id' ],
-			__METHOD__
-		);
+		$link = $this->linkStore->getLink( $userId );
+		$discordId = $link ? $link['discord_id'] : null;
 
 		if ( !$discordId ) {
 			$response['error'] = 'No Discord ID linked';
@@ -145,7 +139,7 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 		$reason = '';
 		$discordRoles = [];
 		$expectedGroups = [];
-		$discordUsername = $this->userOptionsLookup->getOption( $user, 'discord_username', '' );
+		$discordUsername = $link['discord_username'];
 		$hasError = false;
 
 		if ( !$memberData || ( isset( $memberData['error'] ) && $memberData['error'] ) ) {
@@ -230,22 +224,14 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 	}
 
 	private function getUsersWithDiscord() {
-		$dbr = $this->dbProvider->getReplicaDatabase();
-		$res = $dbr->select(
-			'user_properties',
-			[ 'up_user', 'up_value' ],
-			[ 'up_property' => 'discord_id' ],
-			__METHOD__
-		);
-
 		$users = [];
-		foreach ( $res as $row ) {
-			$user = \User::newFromId( $row->up_user );
-			if ( $user && $user->getId() > 0 ) {
+		foreach ( $this->linkStore->getAllLinks() as $userId => $link ) {
+			$user = \User::newFromId( $userId );
+			if ( $user && $user->isRegistered() ) {
 				$users[] = [
 					'user' => $user,
-					'discord_id' => $row->up_value,
-					'discord_username' => $this->userOptionsLookup->getOption( $user, 'discord_username', '' )
+					'discord_id' => $link['discord_id'],
+					'discord_username' => $link['discord_username']
 				];
 			}
 		}
@@ -256,12 +242,7 @@ class SpecialDiscordMembershipCheck extends SpecialPage {
 	private function getUsersWithoutDiscord() {
 		$dbr = $this->dbProvider->getReplicaDatabase();
 
-		$usersWithDiscord = $dbr->selectFieldValues(
-			'user_properties',
-			'up_user',
-			[ 'up_property' => 'discord_id' ],
-			__METHOD__
-		);
+		$usersWithDiscord = array_keys( $this->linkStore->getAllLinks() );
 
 		$conditions = [ 'user_id > 0' ];
 		if ( !empty( $usersWithDiscord ) ) {

@@ -254,10 +254,7 @@ class UserList {
 	}
 
 	private static function getDiscordIdForUser( string $username ): string {
-		$services = MediaWikiServices::getInstance();
-		$db = method_exists( $services, 'getConnectionProvider' ) ? $services->getConnectionProvider()->getReplicaDatabase() : wfGetDB( DB_REPLICA );
-		$row = $db->newSelectQueryBuilder()->select(['up_value'])->from('user_properties')->join('user', null, 'user_id = up_user')->where(['user_name' => $username, 'up_property' => 'discord_id'])->fetchRow();
-		return $row ? trim((string)$row->up_value) : '';
+		return trim( (string)DiscordLinkStore::getInstance()->getDiscordIdByUserName( $username ) );
 	}
 
 	private static function getInlineCss(): string {
