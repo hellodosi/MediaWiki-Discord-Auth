@@ -151,8 +151,11 @@ class DiscordPrimaryAuthenticationProvider extends AbstractPrimaryAuthentication
 		}
 
 		// Set Discord authentication timestamp and enable remember me for persistent session
+		$now = time();
 		$session = $request->getSession();
-		$session->set( 'discord_last_auth', time() );
+		$session->set( 'discord_last_auth', $now );
+		$session->set( 'discord_last_reauth', $now );
+		$session->set( 'AuthManager:lastAuthTimestamp', $now );
 		$session->setRememberUser( true );
 		$session->save();
 

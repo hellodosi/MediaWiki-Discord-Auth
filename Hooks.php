@@ -77,7 +77,20 @@ class Hooks {
 	 * Generate Discord login button HTML
 	 */
 	private static function getDiscordLoginButton( $mode = 'optional' ) {
-		$url = \SpecialPage::getTitleFor( 'DiscordLogin' )->getFullURL();
+		$context = \RequestContext::getMain();
+		$request = $context->getRequest();
+		$params = [];
+
+		$returnTo = $request->getVal( 'returnto' );
+		if ( $returnTo ) {
+			$params['returnto'] = $returnTo;
+		}
+		$returnToQuery = $request->getVal( 'returntoquery' );
+		if ( $returnToQuery ) {
+			$params['returntoquery'] = $returnToQuery;
+		}
+
+		$url = \SpecialPage::getTitleFor( 'DiscordLogin' )->getFullURL( $params );
 
 		$hint = '';
 		if ( $mode !== 'required' ) {
@@ -317,5 +330,41 @@ class Hooks {
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * Handle security sensitive operation status (e.g. Special:BotPasswords, ChangePassword)
+	 * Allows Discord-authenticated users with a recent session to access sensitive pages
+	 *
+	 * @param string|null &$status Status: AuthManager::SEC_OK, AuthManager::SEC_REAUTH, or AuthManager::SEC_FAIL
+	 * @param string $operation Operation being checked (e.g. 'botpasswords')
+	 * @param \MediaWiki\Session\Session $session Current session
+	 * @param int|null $timeSinceAuth Seconds since last authentication, or null
+	 * @return void
+	 */
+	public static function onSecuritySensitiveOperationStatus( &$status, $operation, $session, $timeSinceAuth ) {
+		global $wgReauthenticateTime;
+
+		$user = $session->getUser();
+		if ( !$user || !$user->isRegistered() ) {
+			return;
+		}
+
+		$discordId = DiscordLinkStore::getInstance()->getDiscordId( $user );
+		if ( !$discordId ) {
+			return;
+		}
+
+		$reauthTime = $wgReauthenticateTime ?? 300;
+		if ( $reauthTime === 0 || $reauthTime === false ) {
+			$status = AuthManager::SEC_OK;
+			return;
+		}
+
+		$lastAuth = $session->get( 'discord_last_reauth' ) ?: $session->get( 'discord_last_auth' );
+		if ( $lastAuth && ( time() - $lastAuth ) <= $reauthTime ) {
+			$status = AuthManager::SEC_OK;
+			return;
+		}
 	}
 }

@@ -48,11 +48,22 @@ class SpecialDiscordLogin extends SpecialPage {
     public function execute( $par ) {
         $request = $this->getRequest();
         $output = $this->getOutput();
+        $session = $request->getSession();
         $this->setHeaders();
 
         if ( !$this->linkStore->isAvailable() ) {
             $output->addHTML( '<div class="errorbox">' . $this->msg( 'discordauth-error-table-missing' )->parse() . '</div>' );
             return;
+        }
+
+        // Save returnto and returntoquery to session if present in request
+        $returnTo = $request->getVal( 'returnto' );
+        if ( $returnTo ) {
+            $session->set( 'discord_return_to', $returnTo );
+        }
+        $returnToQuery = $request->getVal( 'returntoquery' );
+        if ( $returnToQuery ) {
+            $session->set( 'discord_return_to_query', $returnToQuery );
         }
 
         // Check if username form was submitted
@@ -87,7 +98,9 @@ class SpecialDiscordLogin extends SpecialPage {
 
         // Generate state for CSRF protection
         $state = bin2hex( random_bytes( 16 ) );
-        $this->getRequest()->getSession()->set( 'discord_auth_state', $state );
+        $session = $this->getRequest()->getSession();
+        $session->set( 'discord_auth_state', $state );
+        $session->save();
 
         $url = "https://discord.com/api/oauth2/authorize?" . http_build_query( [
                 'client_id' => $clientId,
@@ -201,22 +214,18 @@ class SpecialDiscordLogin extends SpecialPage {
         // Set remember me to true to ensure cookies last long enough
         $session->setRememberUser( true );
 
-        // Set Discord authentication timestamp for session timeout
-        $session->set( 'discord_last_auth', time() );
+        // Set Discord authentication timestamp for session timeout and re-authentication
+        $now = time();
+        $session->set( 'discord_last_auth', $now );
+        $session->set( 'discord_last_reauth', $now );
+        $session->set( 'AuthManager:lastAuthTimestamp', $now );
         $session->save();
 
         // Set cookies with extended expiration (1 week minimum)
         $user->setCookies( null, null, true );
 
-        // Redirect to main page
-        $returnTo = $request->getVal( 'returnto' );
-        if ( $returnTo ) {
-            $title = \Title::newFromText( $returnTo );
-        } else {
-            $title = \Title::newMainPage();
-        }
-
-        $output->redirect( $title->getFullURL() );
+        // Redirect to target or main page
+        $this->redirectToTarget();
     }
 
     private function exchangeCodeForToken( $code ) {
@@ -691,22 +700,18 @@ class SpecialDiscordLogin extends SpecialPage {
         // Set remember me to true to ensure cookies last long enough
         $session->setRememberUser( true );
 
-        // Set Discord authentication timestamp for session timeout
-        $session->set( 'discord_last_auth', time() );
+        // Set Discord authentication timestamp for session timeout and re-authentication
+        $now = time();
+        $session->set( 'discord_last_auth', $now );
+        $session->set( 'discord_last_reauth', $now );
+        $session->set( 'AuthManager:lastAuthTimestamp', $now );
         $session->save();
 
         // Set cookies with extended expiration (1 week minimum)
         $user->setCookies( null, null, true );
 
-        // Redirect to main page
-        $returnTo = $request->getVal( 'returnto' );
-        if ( $returnTo ) {
-            $title = \Title::newFromText( $returnTo );
-        } else {
-            $title = \Title::newMainPage();
-        }
-
-        $output->redirect( $title->getFullURL() );
+        // Redirect to target or main page
+        $this->redirectToTarget();
     }
 
     /**
@@ -829,5 +834,39 @@ class SpecialDiscordLogin extends SpecialPage {
         }
 
         return $normalized;
+    }
+
+    /**
+     * Redirect to the return target or main page after successful login
+     */
+    private function redirectToTarget(): void {
+        $request = $this->getRequest();
+        $session = $request->getSession();
+
+        $returnTo = $request->getVal( 'returnto' ) ?: $session->get( 'discord_return_to' );
+        $returnToQuery = $request->getVal( 'returntoquery' ) ?: $session->get( 'discord_return_to_query' );
+        $session->remove( 'discord_return_to' );
+        $session->remove( 'discord_return_to_query' );
+        $session->save();
+
+        if ( $returnTo ) {
+            $title = \Title::newFromText( $returnTo );
+            if ( !$title ) {
+                $title = \Title::newMainPage();
+            }
+        } else {
+            $title = \Title::newMainPage();
+        }
+
+        $query = [];
+        if ( $returnToQuery ) {
+            if ( is_array( $returnToQuery ) ) {
+                $query = $returnToQuery;
+            } else {
+                parse_str( (string)$returnToQuery, $query );
+            }
+        }
+
+        $this->getOutput()->redirect( $title->getFullURL( $query ) );
     }
 }

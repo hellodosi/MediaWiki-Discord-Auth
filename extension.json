@@ -122,7 +122,8 @@
 		"GetPreferences": "DiscordAuth\\Hooks::onGetPreferences",
 		"UserLoadAfterLoadFromSession": "DiscordAuth\\Hooks::onUserLoadAfterLoadFromSession",
 		"ParserFirstCallInit": "DiscordAuth\\Hooks::onParserFirstCallInit",
-		"SidebarBeforeOutput": "DiscordAuth\\Hooks::onSidebarBeforeOutput"
+		"SidebarBeforeOutput": "DiscordAuth\\Hooks::onSidebarBeforeOutput",
+		"SecuritySensitiveOperationStatus": "DiscordAuth\\Hooks::onSecuritySensitiveOperationStatus"
 	},
 	"manifest_version": 2
 }
